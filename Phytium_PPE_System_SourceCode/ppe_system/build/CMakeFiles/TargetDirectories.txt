@@ -1,0 +1,4 @@
+/home/user/ppe/ppe_system/build/CMakeFiles/ppe_system.dir
+/home/user/ppe/ppe_system/build/CMakeFiles/edit_cache.dir
+/home/user/ppe/ppe_system/build/CMakeFiles/rebuild_cache.dir
+/home/user/ppe/ppe_system/build/CMakeFiles/ppe_system_autogen.dir

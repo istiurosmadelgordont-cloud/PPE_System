@@ -1,0 +1,40 @@
+file(REMOVE_RECURSE
+  "CMakeFiles/ppe_system_autogen.dir/AutogenUsed.txt"
+  "CMakeFiles/ppe_system_autogen.dir/ParseCache.txt"
+  "ppe_system_autogen"
+  "CMakeFiles/ppe_system.dir/ppe_system_autogen/mocs_compilation.cpp.o"
+  "CMakeFiles/ppe_system.dir/ppe_system_autogen/mocs_compilation.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/ByteTrack/BYTETracker.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/ByteTrack/BYTETracker.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/ByteTrack/KalmanFilter.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/ByteTrack/KalmanFilter.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/ByteTrack/Object.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/ByteTrack/Object.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/ByteTrack/Rect.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/ByteTrack/Rect.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/ByteTrack/STrack.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/ByteTrack/STrack.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/ByteTrack/lapjv.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/ByteTrack/lapjv.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/camera_node.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/camera_node.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/global_context.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/global_context.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/inference_node.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/inference_node.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/io_node.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/io_node.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/main.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/main.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/rpmsg_node.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/rpmsg_node.cpp.o.d"
+  "CMakeFiles/ppe_system.dir/src/ui_main_window.cpp.o"
+  "CMakeFiles/ppe_system.dir/src/ui_main_window.cpp.o.d"
+  "ppe_system"
+  "ppe_system.pdb"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang CXX)
+  include(CMakeFiles/ppe_system.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

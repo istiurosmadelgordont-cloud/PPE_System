@@ -1,0 +1,30 @@
+#
+# For a description of the syntax of this configuration file,
+# see tools/kconfiglib/kconfig-language.txt.
+#
+
+
+mainmenu "Phytium Baremetal Configuration"
+
+	menu "Project Configuration"
+
+		menu "Baremetal Configuration"
+		config TARGET_NAME
+			string "Build Target Name"
+			default "openamp_core0"
+			help
+				Build Target name for the demo
+
+	endmenu
+
+	config OPENAMP_TRACE_DEBUG
+		bool "Enable OpenAMP Trace Debug"
+		default "n"
+		help
+			Enable OpenAMP Trace Debug
+
+endmenu
+
+
+source "$(SDK_DIR)/standalone.kconfig"
+

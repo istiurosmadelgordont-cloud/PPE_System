@@ -1,0 +1,34 @@
+/home/qiansir/Desktop/phytium-standalone-sdk/example/system/amp/openamp_for_linux/build/libmetal/metal/irq.o: \
+ /home/qiansir/Desktop/phytium-standalone-sdk/third-party/libmetal/metal/irq.c \
+ /home/qiansir/Desktop/phytium-standalone-sdk/example/system/amp/openamp_for_linux/../../../../third-party/libmetal/metal/errno.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/errno.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/sys/errno.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/sys/reent.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/_ansi.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/newlib.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/_newlib_version.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/sys/config.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/machine/ieeefp.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/sys/features.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/lib/gcc/aarch64-none-elf/10.3.1/include/stddef.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/sys/_types.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/machine/_types.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/machine/_default_types.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/sys/lock.h \
+ /home/qiansir/Desktop/phytium-standalone-sdk/example/system/amp/openamp_for_linux/../../../../third-party/libmetal/metal/irq.h \
+ /home/qiansir/Desktop/phytium-standalone-sdk/example/system/amp/openamp_for_linux/../../../../third-party/libmetal/metal/list.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/lib/gcc/aarch64-none-elf/10.3.1/include/stdbool.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/stdlib.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/_ansi.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/sys/cdefs.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/machine/stdlib.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/alloca.h \
+ /home/qiansir/Desktop/phytium-standalone-sdk/example/system/amp/openamp_for_linux/../../../../third-party/libmetal/metal/system/generic/irq.h \
+ /home/qiansir/Desktop/phytium-standalone-sdk/example/system/amp/openamp_for_linux/../../../../third-party/libmetal/metal/irq_controller.h \
+ /home/qiansir/Desktop/phytium-standalone-sdk/example/system/amp/openamp_for_linux/../../../../third-party/libmetal/metal/utilities.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/lib/gcc/aarch64-none-elf/10.3.1/include/stdint.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/lib/gcc/aarch64-none-elf/10.3.1/include/stdint-gcc.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/lib/gcc/aarch64-none-elf/10.3.1/include-fixed/limits.h \
+ /home/qiansir/Desktop/phytium-standalone-sdk/example/system/amp/openamp_for_linux/../../../../third-party/libmetal/metal/assert.h \
+ /home/qiansir/Desktop/phytium-standalone-sdk/example/system/amp/openamp_for_linux/../../../../third-party/libmetal/metal/system/generic/assert.h \
+ /home/qiansir/Desktop/gcc-arm-10.3-2021.07-x86_64-aarch64-none-elf/aarch64-none-elf/include/assert.h
