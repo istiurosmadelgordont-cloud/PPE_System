@@ -130,25 +130,26 @@ void RPMsgController::rx_task() {
         // 维度 1：空间（数据流）- 绝对敏锐的触发器
         // ------------------------------------------------
         if (rpmsg_fd > 0) {
-        // 平时 200ms 唤醒一次，火警时 20ms 唤醒一次，将系统调用降低 90% 以上
-        int timeout_ms = is_physical_alarm ? 20 : 200; 
-        int ret = poll(&pfd, 1, timeout_ms);
+            // 平时 200ms 唤醒一次，火警时 20ms 唤醒一次，将系统调用降低 90% 以上
+            int timeout_ms = is_physical_alarm ? 20 : 200; 
+            int ret = poll(&pfd, 1, timeout_ms);
 
-        if (ret > 0 && (pfd.revents & POLLIN)) {
-            int n = read(rpmsg_fd, &pkt, sizeof(data_packet));
-            // 只要读到有效数据，且是火警 '1'
-            if (n > 0 && pkt.command == DEVICE_CORE_FIRE_REPORT && pkt.data[0] == '1') {
-                // 瞬间续命：只要看到一丝火光，立刻清零安全倒计时！
-                safe_counter = 0; 
-                last_alarm_time = std::chrono::steady_clock::now();
-                
-                if (!is_physical_alarm) {
-                    is_physical_alarm = true;
-                    // 零延迟瞬间发报，UI 爆红
-                    emit SignalBridge::getInstance()->sendPhysicalAlarmStatus(true);
+            if (ret > 0 && (pfd.revents & POLLIN)) {
+                int n = read(rpmsg_fd, &pkt, sizeof(data_packet));
+                // 只要读到有效数据，且是火警 '1'
+                if (n > 0 && pkt.command == DEVICE_CORE_FIRE_REPORT && pkt.data[0] == '1') {
+                    // 瞬间续命：只要看到一丝火光，立刻清零安全倒计时！
+                    safe_counter = 0; 
+                    last_alarm_time = std::chrono::steady_clock::now();
+                    
+                    if (!is_physical_alarm) {
+                        is_physical_alarm = true;
+                        // 零延迟瞬间发报，UI 爆红
+                        emit SignalBridge::getInstance()->sendPhysicalAlarmStatus(true);
+                    }
                 }
             }
-        }
+        } // <--- 关闭 if (rpmsg_fd > 0)
 
         // ------------------------------------------------
         // 维度 2：时间（时钟流）- 独立且强粘滞的解除器
@@ -160,28 +161,14 @@ void RPMsgController::rx_task() {
             // 2ms * 250 = 500 毫秒。
             // 意味着：哪怕底层断联、停发数据，只要 500 毫秒内没被 '1' 重新清零，系统就判定火源已彻底移除！
             if (safe_counter >= 250) {
-            auto now = std::chrono::steady_clock::now();
-            // 通过真实时间差校验，500毫秒内未收到火警信号，则解除报警
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_alarm_time).count() >= 500) {
-                is_physical_alarm = false;
-                // 彻底解除，UI 恢复绿色
-                emit SignalBridge::getInstance()->sendPhysicalAlarmStatus(false);
-            }
-        }
-
-        // 保持极低开销的 2ms 极限探雷频率
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-}           
-            // 2ms * 250 = 500 毫秒。
-            // 意味着：哪怕底层断联、停发数据，只要 500 毫秒内没被 '1' 重新清零，系统就判定火源已彻底移除！
-            if (safe_counter >= 250) {
-            auto now = std::chrono::steady_clock::now();
-            // 通过真实时间差校验，500毫秒内未收到火警信号，则解除报警
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_alarm_time).count() >= 500) {
-                is_physical_alarm = false;
-                // 彻底解除，UI 恢复绿色
-                emit SignalBridge::getInstance()->sendPhysicalAlarmStatus(false);
+                auto now = std::chrono::steady_clock::now();
+                // 通过真实时间差校验，500毫秒内未收到火警信号，则解除报警
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_alarm_time).count() >= 500) {
+                    is_physical_alarm = false;
+                    safe_counter = 0;
+                    // 彻底解除，UI 恢复绿色
+                    emit SignalBridge::getInstance()->sendPhysicalAlarmStatus(false);
+                }
             }
         }
 

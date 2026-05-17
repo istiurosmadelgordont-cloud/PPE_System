@@ -171,12 +171,11 @@ void inference_thread_func() {
             int text_y = std::max(25, rect.y - 5);
             cv::putText(frame, text, cv::Point(rect.x, text_y), cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2);
 
-            // 违规行为触发逻辑 (假设 label 4~7 是违规状态)
+            // 违规行为触发逻辑 (label 4~7 是违规状态)
             if (label >= 4 && label <= 7) { 
                 std::string v_name = CLASS_NAMES[label];
 
-                // 状态机防抖：如果该 ID 是首次报警，或者之前没报过这个类型的警
-                if (alarmed_ids.find(track_id) == alarmed_ids.end() || !alarmed_ids[track_id]) {
+                // 状态机防抖：使用迭代器一次查找，避免双重 find() 浪费
                 auto it = alarmed_ids.find(track_id);
                 if (it == alarmed_ids.end() || !it->second) {
                     
@@ -204,16 +203,13 @@ void inference_thread_func() {
                         QString::fromStdString(expected_img_path)
                     );
 
-              printf("🔔 [报警] ID:%d 发生 %s 违规，触发抓拍！置信度: %.0f%%\n", track_id, v_name.c_str(), score * 100);
+                    printf("🔔 [报警] ID:%d 发生 %s 违规，触发抓拍！置信度: %.0f%%\n", track_id, v_name.c_str(), score * 100);
                 }
             }
             // ==========================================
-            // ⚠️ 警告：这是被你误删的“合规洗白”逻辑，我给你补回来了！
-            // 缺少它，蜂鸣器将永远无法停止！
+            // 合规洗白逻辑：使用迭代器一次查找，避免双重 find()
             // ==========================================
             else if (label >= 0 && label <= 3) {
-                if (alarmed_ids.find(track_id) != alarmed_ids.end() && alarmed_ids[track_id]) {
-                    alarmed_ids[track_id] = false; 
                 auto it = alarmed_ids.find(track_id);
                 if (it != alarmed_ids.end() && it->second) {
                     it->second = false; 
@@ -252,7 +248,6 @@ void inference_thread_func() {
         // ==========================================
         // YOLO 根本不知道有火，它是被底层 RPMsg 状态强行触发的！
         if (RPMsgController::getInstance().is_physical_alarm) {
-            
             
 
             // 2. 强行取证：绕过 AI，直接向 IO 线程投递抓拍任务！(加 3 秒防抖防止硬盘爆炸)

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PPE 智能安全监控中枢</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:#1A1410;color:#F5EDE4;width:100vw;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+
+/* 顶栏 */
+.hdr{height:44px;background:linear-gradient(90deg,#1A1410,#2A1F17,#1A1410);border-bottom:1px solid #3D2E22;display:flex;align-items:center;padding:0 14px;flex-shrink:0}
+.hdr .logo{width:30px;height:30px;background:linear-gradient(135deg,#D97706,#F59E0B);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:16px;margin-right:10px;box-shadow:0 0 10px rgba(217,119,6,.3)}
+.hdr .ttl{font-size:15px;font-weight:bold;background:linear-gradient(90deg,#FBBF24,#F59E0B);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hdr .sub{font-size:9px;color:#6B5744;margin-left:10px;border-left:1px solid #3D2E22;padding-left:10px}
+.hdr .sp{flex:1}
+.badges{display:flex;gap:5px}
+.b{font-size:9px;font-weight:bold;padding:3px 10px;border-radius:11px;white-space:nowrap}
+.bg{color:#6EE7B7;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.3)}
+.ba{color:#FCD34D;background:rgba(252,211,77,.1);border:1px solid rgba(252,211,77,.25)}
+.bp{color:#FCA5A5;background:rgba(252,165,165,.1);border:1px solid rgba(252,165,165,.2)}
+.bb{color:#93C5FD;background:rgba(147,197,253,.1);border:1px solid rgba(147,197,253,.2)}
+
+/* 主体：两栏 */
+.main{flex:1;display:flex;padding:8px;gap:8px;min-height:0}
+
+/* 左栏：正方形视频 + AI条，占屏幕主体 */
+.col-vid{display:flex;flex-direction:column;gap:6px;flex-shrink:0;min-height:0;width:min(calc(100vh - 80px), 55vw)}
+.vid-box{flex:1;aspect-ratio:1/1;min-height:0;background:#0D0A07;border:2px solid #4A3628;border-radius:8px;position:relative;overflow:hidden}
+.vid-box::before{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(74,54,40,.1) 1px,transparent 1px),linear-gradient(90deg,rgba(74,54,40,.1) 1px,transparent 1px);background-size:40px 40px;z-index:1;pointer-events:none}
+.vid-box .sc{width:100%;height:100%;background:linear-gradient(170deg,#1a150f,#0d0a07 40%,#1a150f);position:relative}
+.per{position:absolute;width:40px;height:95px;border-radius:50% 50% 6px 6px;background:rgba(245,237,228,.05)}
+.per .hd{width:16px;height:16px;background:rgba(245,237,228,.07);border-radius:50%;position:absolute;top:-20px;left:50%;transform:translateX(-50%)}
+.per .ht{width:20px;height:10px;background:rgba(251,191,36,.25);border-radius:50% 50% 0 0;position:absolute;top:-23px;left:50%;transform:translateX(-50%)}
+.db{position:absolute;border:2px solid;border-radius:3px;z-index:2}
+.db .dl{position:absolute;top:-15px;left:-2px;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:2px;white-space:nowrap;color:#fff}
+.dok{border-color:#10B981}.dok .dl{background:#10B981}
+.dng{border-color:#EF4444;box-shadow:0 0 8px rgba(239,68,68,.25)}.dng .dl{background:#EF4444}
+.dbl{border-color:#3B82F6}.dbl .dl{background:#3B82F6}
+.fps{position:absolute;top:8px;right:10px;color:#FBBF24;font-size:13px;font-weight:bold;background:rgba(26,20,16,.7);padding:2px 10px;border-radius:5px;border:1px solid rgba(251,191,36,.15);z-index:3}
+.rec{position:absolute;top:10px;left:12px;display:flex;align-items:center;gap:5px;font-size:10px;color:#EF4444;font-weight:bold;z-index:3}
+.rec::before{content:'';width:8px;height:8px;background:#EF4444;border-radius:50%;animation:bl 1s infinite}
+@keyframes bl{0%,100%{opacity:1}50%{opacity:.3}}
+.ai{background:rgba(42,31,23,.85);border:1px solid #3D2E22;border-radius:6px;padding:4px 10px;font-size:10px;color:#8B7355;font-weight:bold;text-align:center;flex-shrink:0}
+.ai span{color:#FBBF24}
+
+/* 右栏：仪表盘网格 */
+.col-dash{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto auto 1fr auto;gap:6px;min-height:0;overflow-y:auto}
+
+/* 卡片通用 */
+.cd{background:linear-gradient(135deg,#2A1F17,#1F1812);border:1px solid #3D2E22;border-radius:8px;padding:8px 10px;min-width:0;overflow:hidden}
+.cd .ct{font-size:10px;color:#8B7355;margin-bottom:5px;font-weight:bold;border-bottom:1px solid rgba(61,46,34,.5);padding-bottom:3px}
+
+/* 跨两列 */
+.span2{grid-column:1/3}
+
+/* 传感器网格 */
+.sensors{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
+.sen{background:rgba(26,20,16,.5);border:1px solid rgba(61,46,34,.4);border-radius:5px;padding:5px 7px;text-align:center}
+.sen .sn{font-size:8px;color:#6B5744}
+.sen .sv{font-size:12px;font-weight:bold}
+.cs{color:#6EE7B7}.ca{color:#FCD34D}.cb{color:#93C5FD}.cp{color:#C4B5FD}.co{color:#FDBA74}
+
+/* 评分环 */
+.score-ring{width:48px;height:48px;border-radius:50%;background:conic-gradient(#10B981 0deg 302deg,#3D2E22 302deg 360deg);display:flex;align-items:center;justify-content:center;margin:4px auto}
+.score-ring .inner{width:36px;height:36px;border-radius:50%;background:#1F1812;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:bold;color:#6EE7B7}
+
+/* 灯塔 */
+.tower{display:flex;align-items:center;justify-content:center;gap:8px;margin:6px 0}
+.tl{width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,.04)}
+.tl-r{background:radial-gradient(circle,rgba(239,68,68,.12),rgba(239,68,68,.03));border-color:rgba(239,68,68,.12)}
+.tl-y{background:radial-gradient(circle,rgba(251,191,36,.12),rgba(251,191,36,.03));border-color:rgba(251,191,36,.12)}
+.tl-g{background:radial-gradient(circle,#10B981,#059669);border-color:rgba(16,185,129,.5);box-shadow:0 0 10px rgba(16,185,129,.4);animation:gw 2s infinite}
+@keyframes gw{0%,100%{box-shadow:0 0 6px rgba(16,185,129,.3)}50%{box-shadow:0 0 14px rgba(16,185,129,.6)}}
+
+/* 统计条 */
+.sr{display:flex;align-items:center;margin-bottom:4px;font-size:10px}
+.sr .sl{color:#A89282;width:60px;flex-shrink:0;font-size:9px}
+.sr .bar{flex:1;height:5px;background:#1A1410;border-radius:3px;margin:0 6px}
+.sr .bar .fill{height:100%;border-radius:3px}
+.sr .sv{font-weight:bold;width:25px;text-align:right;font-size:10px}
+
+/* 核心架构 */
+.arch{display:flex;gap:4px}
+.core{font-size:8px;font-weight:bold;padding:4px 6px;border-radius:4px;text-align:center;border:1px solid;flex:1;line-height:1.4}
+.c0{color:#6EE7B7;border-color:rgba(16,185,129,.2);background:rgba(16,185,129,.05)}
+.c1{color:#EF4444;border-color:rgba(239,68,68,.2);background:rgba(239,68,68,.05)}
+.c23{color:#FBBF24;border-color:rgba(251,191,36,.2);background:rgba(251,191,36,.05)}
+
+/* 日志面板 */
+.log-panel{display:flex;flex-direction:column;min-height:0}
+.pt{font-size:11px;font-weight:bold;color:#F5EDE4;padding-bottom:5px;border-bottom:2px solid #D97706;margin-bottom:5px;display:flex;align-items:center}
+.pulse{width:7px;height:7px;background:#EF4444;border-radius:50%;margin-right:6px;animation:pg 1.5s infinite}
+@keyframes pg{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}50%{box-shadow:0 0 0 4px rgba(239,68,68,0)}}
+.log{flex:1;overflow-y:auto;min-height:0}
+.log table{width:100%;border-collapse:collapse;font-size:10px}
+.log thead th{background:#2A1F17;color:#8B7355;font-weight:bold;padding:4px 5px;text-align:left;border-bottom:1px solid #4A3628;position:sticky;top:0}
+.log tbody tr{border-bottom:1px solid rgba(61,46,34,.3)}
+.log tbody tr:nth-child(odd){background:rgba(26,20,16,.3)}
+.log tbody tr:nth-child(even){background:rgba(42,31,23,.2)}
+.log tbody tr:hover{background:rgba(217,119,6,.08)}
+.log td{padding:3px 5px;color:#D4C4B0}
+.tg{font-size:9px;font-weight:600;padding:1px 6px;border-radius:7px;display:inline-block}
+.tr{color:#FCA5A5;background:rgba(239,68,68,.15)}
+.to{color:#FDBA74;background:rgba(249,115,22,.15)}
+.tgg{color:#86EFAC;background:rgba(34,197,94,.12)}
+
+/* 健康 */
+.hr{display:flex;align-items:center;margin-bottom:3px;font-size:9px}
+.hr .d{width:5px;height:5px;border-radius:50%;margin-right:5px;flex-shrink:0}
+.hr .n{color:#A89282;flex:1}
+.hr .s{font-weight:bold;font-size:9px}
+
+/* 通信安全 */
+.sec-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:9px}
+.sec-item .si-t{color:#6B5744;font-size:8px}
+.sec-item .si-v{font-weight:bold;font-size:11px}
+
+/* 按钮 */
+.btns{display:flex;gap:6px;flex-shrink:0}
+.btn{flex:1;height:34px;border:none;border-radius:8px;font-size:12px;font-weight:bold;color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.btn:hover{transform:translateY(-1px)}
+.bG{background:linear-gradient(90deg,#059669,#10B981);box-shadow:0 2px 6px rgba(16,185,129,.2)}
+.bA{background:linear-gradient(90deg,#B45309,#D97706);box-shadow:0 2px 6px rgba(217,119,6,.2)}
+.bR{background:linear-gradient(90deg,#B91C1C,#DC2626);box-shadow:0 2px 6px rgba(220,38,38,.2)}
+
+.ftr{height:22px;background:#1A1410;border-top:1px solid #3D2E22;display:flex;align-items:center;padding:0 14px;font-size:8px;color:#5C4A3A;flex-shrink:0}
+.ftr span{color:#8B7355}
+.ftr .sp{flex:1}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="logo">🛡</div>
+  <div class="ttl">PPE 智能安全监控中枢</div>
+  <div class="sub">飞腾派 E2000Q · 异构四核</div>
+  <div class="sp"></div>
+  <div class="badges">
+    <div class="b bg">● RPMsg</div>
+    <div class="b ba">🌡 38.2°C</div>
+    <div class="b bp">⚡ CPU 67%</div>
+    <div class="b bb">💾 42%</div>
+  </div>
+</div>
+
+<div class="main">
+  <!-- ===== 左：正方形视频 ===== -->
+  <div class="col-vid">
+    <div class="vid-box">
+      <div class="sc">
+        <div class="per" style="left:18%;top:28%"><div class="ht"></div><div class="hd"></div></div>
+        <div class="per" style="left:42%;top:22%;width:44px;height:100px"><div class="hd"></div></div>
+        <div class="per" style="left:66%;top:30%;width:38px;height:88px"><div class="ht"></div><div class="hd"></div></div>
+        <div class="db dok" style="left:14%;top:20%;width:68px;height:125px"><div class="dl">ID:3 Helmet 94%</div></div>
+        <div class="db dng" style="left:38%;top:14%;width:72px;height:132px"><div class="dl">ID:7 No Helmet 89%</div></div>
+        <div class="db dbl" style="left:62%;top:22%;width:62px;height:118px"><div class="dl">ID:12 Vest 96%</div></div>
+        <div class="fps">FPS: 24.3</div>
+        <div class="rec">REC</div>
+      </div>
+    </div>
+    <div class="ai">⚙ <span>YOLOv8 INT8</span> ｜ 🎯 <span>ByteTrack</span> ｜ 📐 320×320 ｜ 🧮 NCNN</div>
+  </div>
+
+  <!-- ===== 右：仪表盘 2列网格 ===== -->
+  <div class="col-dash">
+    <!-- 第1行：传感器 (跨两列) -->
+    <div class="cd span2">
+      <div class="ct">📡 从核传感器矩阵 (Core 1 裸机前哨站)</div>
+      <div class="sensors">
+        <div class="sen"><div class="sn">🔥 火焰探头</div><div class="sv cs">● 安全</div></div>
+        <div class="sen"><div class="sn">☠️ 有害气体</div><div class="sv cb">● 正常</div></div>
+        <div class="sen"><div class="sn">🌡 温度</div><div class="sv ca">28.5°C</div></div>
+        <div class="sen"><div class="sn">💧 湿度</div><div class="sv cp">65%</div></div>
+        <div class="sen"><div class="sn">👤 人员接近</div><div class="sv co">3人</div></div>
+        <div class="sen"><div class="sn">🔊 噪声</div><div class="sv cs">62dB</div></div>
+      </div>
+    </div>
+
+    <!-- 第2行：安全评分 + 灯塔 -->
+    <div class="cd">
+      <div class="ct">🏆 今日安全评分</div>
+      <div class="score-ring"><div class="inner">84</div></div>
+      <div style="text-align:center;font-size:9px;color:#6EE7B7;font-weight:bold;margin-top:2px">良好 · 违规40次</div>
+    </div>
+    <div class="cd">
+      <div class="ct">🚨 三色报警灯塔</div>
+      <div class="tower"><div class="tl tl-r"></div><div class="tl tl-y"></div><div class="tl tl-g"></div></div>
+      <div style="text-align:center;font-size:9px;color:#10B981;font-weight:bold">当前等级: ● 安全</div>
+    </div>
+
+    <!-- 第3行：日志(跨两列,弹性填充) -->
+    <div class="cd span2 log-panel" style="min-height:0;overflow:hidden">
+      <div class="pt"><div class="pulse"></div>实时报警日志</div>
+      <div class="log">
+        <table>
+          <thead><tr><th>时间</th><th>违规类型</th><th>来源</th><th></th></tr></thead>
+          <tbody>
+            <tr><td>17:05:12</td><td><span class="tg tr">未戴安全帽</span></td><td style="font-size:8px;color:#8B7355">AI视觉</td><td style="color:#FCD34D;font-size:9px">🔍</td></tr>
+            <tr><td>17:03:48</td><td><span class="tg tr">未穿安全背心</span></td><td style="font-size:8px;color:#8B7355">AI视觉</td><td style="color:#FCD34D;font-size:9px">🔍</td></tr>
+            <tr><td>17:01:22</td><td><span class="tg to">底层火警触发</span></td><td style="font-size:8px;color:#8B7355">从核GPIO</td><td style="color:#FCD34D;font-size:9px">🔍</td></tr>
+            <tr><td>16:58:07</td><td><span class="tg tr">未戴防护手套</span></td><td style="font-size:8px;color:#8B7355">AI视觉</td><td style="color:#FCD34D;font-size:9px">🔍</td></tr>
+            <tr><td>16:55:33</td><td><span class="tg tr">未戴安全帽</span></td><td style="font-size:8px;color:#8B7355">AI视觉</td><td style="color:#FCD34D;font-size:9px">🔍</td></tr>
+            <tr><td>16:52:19</td><td><span class="tg to">有害气体超标</span></td><td style="font-size:8px;color:#8B7355">从核MQ-2</td><td style="color:#FCD34D;font-size:9px">🔍</td></tr>
+            <tr><td>16:48:41</td><td><span class="tg tgg">ID:3 合规恢复</span></td><td style="font-size:8px;color:#8B7355">AI视觉</td><td style="color:#FCD34D;font-size:9px">🔍</td></tr>
+            <tr><td>16:45:08</td><td><span class="tg tr">未戴护目镜</span></td><td style="font-size:8px;color:#8B7355">AI视觉</td><td style="color:#FCD34D;font-size:9px">🔍</td></tr>
+            <tr><td>16:42:55</td><td><span class="tg to">高温预警 45°C</span></td><td style="font-size:8px;color:#8B7355">从核DHT11</td><td style="color:#FCD34D;font-size:9px">🔍</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 第4行底部：左-统计+架构 右-健康+通信+按钮 -->
+    <div class="cd" style="display:flex;flex-direction:column;gap:8px">
+      <div>
+        <div class="ct">📊 今日违规统计</div>
+        <div class="sr"><span class="sl">未戴安全帽</span><div class="bar"><div class="fill" style="width:72%;background:linear-gradient(90deg,#DC2626,#EF4444)"></div></div><span class="sv" style="color:#EF4444">18</span></div>
+        <div class="sr"><span class="sl">未穿背心</span><div class="bar"><div class="fill" style="width:48%;background:linear-gradient(90deg,#D97706,#F59E0B)"></div></div><span class="sv" style="color:#F59E0B">12</span></div>
+        <div class="sr"><span class="sl">未戴护目镜</span><div class="bar"><div class="fill" style="width:28%;background:linear-gradient(90deg,#2563EB,#3B82F6)"></div></div><span class="sv" style="color:#3B82F6">7</span></div>
+        <div class="sr"><span class="sl">物理报警</span><div class="bar"><div class="fill" style="width:12%;background:linear-gradient(90deg,#C2410C,#EA580C)"></div></div><span class="sv" style="color:#EA580C">3</span></div>
+      </div>
+      <div>
+        <div class="ct">🧠 异构核心</div>
+        <div class="arch">
+          <div class="core c0">Core0<br>UI+IO<br>🟢38°C</div>
+          <div class="core c1">Core1<br>裸机<br>🟢2ms</div>
+          <div class="core c23">Core2+3<br>YOLO<br>🟡84%</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cd" style="display:flex;flex-direction:column;gap:8px">
+      <div>
+        <div class="ct">🏥 系统健康</div>
+        <div class="hr"><div class="d" style="background:#10B981"></div><span class="n">AI 推理</span><span class="s" style="color:#10B981">42ms</span></div>
+        <div class="hr"><div class="d" style="background:#10B981"></div><span class="n">摄像头</span><span class="s" style="color:#10B981">在线</span></div>
+        <div class="hr"><div class="d" style="background:#10B981"></div><span class="n">RPMsg</span><span class="s" style="color:#10B981">连接</span></div>
+        <div class="hr"><div class="d" style="background:#10B981"></div><span class="n">从核心跳</span><span class="s" style="color:#10B981">正常</span></div>
+        <div class="hr"><div class="d" style="background:#F59E0B"></div><span class="n">磁盘</span><span class="s" style="color:#F59E0B">42%</span></div>
+      </div>
+      <div>
+        <div class="ct">🔒 通信安全</div>
+        <div class="sec-grid">
+          <div class="sec-item"><div class="si-t">RPMsg校验</div><div class="si-v cs">✓ CRC</div></div>
+          <div class="sec-item"><div class="si-t">心跳</div><div class="si-v cs">✓ 在线</div></div>
+          <div class="sec-item"><div class="si-t">非法数据</div><div class="si-v cs">0 次</div></div>
+          <div class="sec-item"><div class="si-t">会话</div><div class="si-v ca">活跃</div></div>
+        </div>
+      </div>
+      <div class="btns" style="margin-top:auto">
+        <button class="btn bG">● 实时监控</button>
+        <button class="btn bA">📂 导入</button>
+        <button class="btn bR">⏻ 退出</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="ftr">
+  <span>飞腾派 E2000Q</span>&nbsp;Core0:UI+IO ｜ Core1:裸机前哨站 ｜ Core2+3:YOLO推理
+  <div class="sp"></div>
+  <span>© 2026 双生序章 · 全国大学生集成电路创新创业大赛</span>
+</div>
+
+</body>
+</html>
