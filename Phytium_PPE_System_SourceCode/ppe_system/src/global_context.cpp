@@ -8,14 +8,14 @@
  */
 #include "global_context.hpp"
 
-// 1.实例化全局开关（atomic 保证多核可见性）
+/// @brief 实例化全局生命周期开关（基于 atomic 内存屏障保证多核可见性）
 std::atomic<bool> is_running{true};
 
-// 2.实例化全局无锁队列(必须和hpp里的类型与大小严格对应)
+/// @brief 实例化跨核无锁环形队列内存区，建立进程内极速通信管道
 LockFreeRingBuffer<cv::Mat, 5> cap_queue;
 LockFreeRingBuffer<AlarmEvent, 20> alarm_queue;
 
-// 3.实例化媒体控制变量（atomic 保证跨线程安全）
+/// @brief 实例化流媒体状态控制字，保障 UI 线程与采集线程的热更新一致性
 std::atomic<int> current_source_mode{0};
 std::string video_path = "";
 std::atomic<bool> source_changed{false};

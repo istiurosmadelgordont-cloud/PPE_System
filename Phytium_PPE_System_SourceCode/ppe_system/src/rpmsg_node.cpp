@@ -1,9 +1,13 @@
 /**
  * @file      rpmsg_node.cpp
- * @brief     底层硬件关联与 OpenAMP 跨核通信模块 (纯事件驱动版)
- * @author    [双生序章]
- * @version   3.1.0
+ * @brief     底层异构通信节点实现 (OpenAMP RPMsg Controller)
+ * @details   实现与飞腾派从核的 /dev/rpmsg0 通信，包含非对称防抖机制。
+ * @author    [双生序章] 团队
+ * @version   3.1.0 (极致稳定版)
+ * @date      2026-05-18
+ * @copyright Copyright (c) 2026. All rights reserved.
  */
+
 #include "rpmsg_node.hpp"
 #include "ui_main_window.hpp" // 【绝对核心】：必须引入它，才能使用 SignalBridge 发送信号
 #include <chrono>
@@ -15,9 +19,9 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#define MAX_DATA_LENGTH 256
-#define DEVICE_CORE_BUZZER_CTRL 0x0005U
-#define DEVICE_CORE_FIRE_REPORT 0x0006U
+#define MAX_DATA_LENGTH 256             ///< 最大数据包长度
+#define DEVICE_CORE_BUZZER_CTRL 0x0005U ///< 蜂鸣器控制命令字
+#define DEVICE_CORE_FIRE_REPORT 0x0006U ///< 火焰探头报警命令字
 
 #pragma pack(push, 1)
 typedef struct {

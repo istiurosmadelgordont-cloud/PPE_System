@@ -1,9 +1,18 @@
+/**
+ * @file      core_config.hpp
+ * @brief     PPE智能安全监控中枢系统
+ * @details   飞腾派 E2000Q 异构多核平台定制化开发
+ * @author    [双生序章] 团队
+ * @version   3.1.0 (极致稳定版)
+ * @date      2026-05-18
+ * @copyright Copyright (c) 2026. All rights reserved.
+ */
+
 #pragma once
 #include <chrono>
 #include <opencv2/opencv.hpp>
 #include <string>
 #include <vector>
-
 
 // ==========================================
 // 硬件级物理核映射 (飞腾派)

@@ -1,3 +1,13 @@
+/**
+ * @file      ui_main_window.hpp
+ * @brief     PPE智能安全监控中枢系统
+ * @details   飞腾派 E2000Q 异构多核平台定制化开发
+ * @author    [双生序章] 团队
+ * @version   3.1.0 (极致稳定版)
+ * @date      2026-05-18
+ * @copyright Copyright (c) 2026. All rights reserved.
+ */
+
 #pragma once
 #include <QFrame>
 #include <QGridLayout>
@@ -34,9 +44,12 @@ private:
   SignalBridge() = default;
 };
 
-// ==========================================
-// 自定义圆形评分组件
-// ==========================================
+/**
+ * @class CircularScoreWidget
+ * @brief 自定义工业级圆形评分组件
+ * @details 通过 QPainter 重写 paintEvent
+ * 实现动态圆环绘制，用于展示系统当前的整体安全健康度。
+ */
 class CircularScoreWidget : public QWidget {
   Q_OBJECT
 public:
@@ -51,9 +64,13 @@ private:
   QString m_statusText;
 };
 
-// ==========================================
-// 主窗口类
-// ==========================================
+/**
+ * @class MainWindow
+ * @brief PPE 系统主控展示窗口
+ * @details 基于 16:9 比例的暗黑工业风大屏设计，集成 6:4 智能排版。
+ *          涵盖视频实时渲染、多模传感矩阵、AI 告警日志及 DeepSeek
+ * 整改顾问面板。
+ */
 class MainWindow : public QMainWindow {
   Q_OBJECT
 public:

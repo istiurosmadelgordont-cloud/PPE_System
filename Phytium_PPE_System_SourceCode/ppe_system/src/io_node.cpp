@@ -20,7 +20,6 @@
 #include <thread>
 #include <vector>
 
-
 namespace fs = std::filesystem;
 
 void check_and_cleanup_disk(const std::string &dir_path) {
