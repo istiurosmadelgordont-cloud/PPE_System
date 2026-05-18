@@ -1,392 +1,789 @@
-/**
- * @file      ui_main_window.cpp
- * @brief     Qt5 零拷贝全栈可视化与防抖监控中枢
- * @author    [双生序章]
- * @version   2.0.0
- * @date      2026-04-16
- * @note      运行于 Core 0 (小核)。负责基于 SignalBridge 的跨线程 OpenCV 图像零拷贝渲染、
- *            双向防抖状态机判定，以及底层硬件报警信号的 UI 强制瞬间重绘。
- */
 #include "ui_main_window.hpp"
+#include "global_context.hpp"
+#include "rpmsg_node.hpp"
 #include <QApplication>
+#include <QDateTime>
+#include <QDialog>
+#include <QFile>
 #include <QFileDialog>
 #include <QMessageBox>
-#include <QPainter>  
-#include <QDialog>   
-#include <chrono>    
-#include <QFile>
+#include <QPainter>
+#include <QStringList>
 #include <QTextStream>
 #include <QTimer>
-#include <QStringList> //用于分割字符串
-#include <QDateTime>
-#include "rpmsg_node.hpp"
+#include <chrono>
 
 Q_DECLARE_METATYPE(cv::Mat)
 
-extern int current_source_mode; 
-extern std::string video_path;
-extern bool source_changed;
-extern bool is_running;
+// ==========================================
+// CircularScoreWidget Implementation
+// ==========================================
+CircularScoreWidget::CircularScoreWidget(QWidget *parent)
+    : QWidget(parent), m_score(84), m_statusText("良好 - 压线40分") {
+  setMinimumSize(120, 120);
+}
 
-//初始化CPU历史滴答数为0
-MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), prevTotalTicks(0), prevIdleTicks(0) {
-    qRegisterMetaType<cv::Mat>("cv::Mat");
+void CircularScoreWidget::setScore(int score, const QString &statusText) {
+  m_score = score;
+  m_statusText = statusText;
+  update();
+}
 
-    //1.视频显示区
-    videoLabel = new QLabel(this);
-    videoLabel->setMinimumSize(640, 480);
-    videoLabel->setAlignment(Qt::AlignCenter);
-    videoLabel->setScaledContents(true); 
-    videoLabel->setText("等待视频流接入...");
-    videoLabel->setStyleSheet("color: white; background-color: #1e1e1e; border: 2px solid #555;");
+void CircularScoreWidget::paintEvent(QPaintEvent *event) {
+  QPainter painter(this);
+  painter.setRenderHint(QPainter::Antialiasing);
 
-    //2.违规日志表格
-    logTable = new QTableWidget(0, 3, this);
-    logTable->setHorizontalHeaderLabels({"报警时间", "违规类型", "处理状态"});
-    logTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    logTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    logTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    logTable->setMinimumHeight(150);
-    logTable->setStyleSheet(
-        "QTableWidget {"
-        "   background-color: #FCFBF8;"
-        "   color: #4A4643;"
-        "   gridline-color: #EAE6DF;"
-        "   border: 1px solid #E0DCD3;"
-        "   border-radius: 4px;"
-        "   font-size: 13px;"
-        "}"
-        "QTableWidget::item:selected {"
-        "   background-color: #FDF3E1;" // 选中时变成温暖的浅琥珀色
-        "   color: #D97706;"
-        "}"
-        "QHeaderView::section {"
-        "   background-color: #F3EFE6;"
-        "   color: #5C5750;"
-        "   font-weight: bold;"
-        "   border: none;"
-        "   border-bottom: 1px solid #E0DCD3;"
-        "   padding: 4px;"
-        "}"
-    );
+  int side = qMin(width(), height());
+  int x = (width() - side) / 2;
+  int y = (height() - side) / 2;
+  QRect rect(x + 10, y + 10, side - 20, side - 20);
 
-    //3.按钮与监控标签创建
-    btnLiveStream = new QPushButton(" 实时监控", this);
-    btnImportVideo = new QPushButton(" 导入录像", this);
-    btnExit = new QPushButton(" 安全退出", this);
+  // Background circle
+  QPen bgPen(QColor("#2C2A29"), 8);
+  painter.setPen(bgPen);
+  painter.drawEllipse(rect);
 
-    int btnHeight = 45;
-    btnLiveStream->setMinimumHeight(btnHeight);
-    btnImportVideo->setMinimumHeight(btnHeight);
-    btnExit->setMinimumHeight(btnHeight);
-    
-     btnLiveStream->setStyleSheet("QPushButton { background-color: #10B981; color: white; font-weight: bold; border-radius: 4px; border: none; } QPushButton:hover { background-color: #059669; }");
-    btnImportVideo->setStyleSheet("QPushButton { background-color: #F59E0B; color: white; font-weight: bold; border-radius: 4px; border: none; } QPushButton:hover { background-color: #D97706; }");
-    btnExit->setStyleSheet("QPushButton { background-color: #EF4444; color: white; font-weight: bold; border-radius: 4px; border: none; } QPushButton:hover { background-color: #DC2626; }");
+  // Progress arc
+  QColor progressColor =
+      m_score >= 80 ? QColor("#10B981")
+                    : (m_score >= 60 ? QColor("#F59E0B") : QColor("#EF4444"));
+  QPen progPen(progressColor, 8);
+  progPen.setCapStyle(Qt::RoundCap);
+  painter.setPen(progPen);
+  int startAngle = 90 * 16;
+  int spanAngle = -int((m_score / 100.0) * 360 * 16);
+  painter.drawArc(rect, startAngle, spanAngle);
 
-    tempLabel = new QLabel("温度: --.- °C", this);
-    tempLabel->setStyleSheet("color: #5cb85c; font-weight: bold; font-size: 16px; padding: 2px;");
-    tempLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter); 
+  // Score text
+  painter.setPen(QColor("#FFFFFF"));
+  QFont font = painter.font();
+  font.setPixelSize(36);
+  font.setBold(true);
+  painter.setFont(font);
+  painter.drawText(rect, Qt::AlignCenter, QString::number(m_score));
 
-    //CPU使用率标签
-    cpuUsageLabel = new QLabel("CPU: --%", this);
-    cpuUsageLabel->setStyleSheet("color: #5cb85c; font-weight: bold; font-size: 16px; padding: 2px; margin-left: 15px;");
-    cpuUsageLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter); 
+  // Status text
+  font.setPixelSize(10);
+  font.setBold(false);
+  painter.setFont(font);
+  painter.setPen(progressColor);
+  painter.drawText(QRect(x, rect.bottom() + 5, side, 20), Qt::AlignCenter,
+                   m_statusText);
+}
 
-    //4.布局拼装
-    
-    // 【初始化新增的标签】：直面物理现实（11类模型，低电平触发蜂鸣器）
-    hardwareStatusLabel = new QLabel("物理警报(RPMsg): 蜂鸣器挂起", this);
-    hardwareStatusLabel->setStyleSheet("color: #00C851; font-weight: bold; font-size: 14px; margin-right: 15px;");
-    
-    aiStatusLabel = new QLabel(" 引擎: YOLOv8 INT8 | 追踪: ByteTrack", this);
-    aiStatusLabel->setStyleSheet("color: #5bc0de; font-weight: bold; font-size: 12px; margin-top: 5px;");
+// ==========================================
+// MainWindow Implementation
+// ==========================================
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent), prevTotalTicks(0), prevIdleTicks(0) {
+  qRegisterMetaType<cv::Mat>("cv::Mat");
 
-    // ------------------------------------------
-    // 模块 1：全局顶栏 (Header)
-    // ------------------------------------------
-    QHBoxLayout* headerLayout = new QHBoxLayout;
-    headerLayout->setContentsMargins(0, 0, 0, 10);
+  // 1. 全局样式设置 (暗黑工业风)
+  this->setStyleSheet("QMainWindow { background-color: #1A1615; font-family: "
+                      "'Segoe UI', 'Microsoft YaHei', sans-serif; }");
+  QWidget *centralWidget = new QWidget(this);
+  setCentralWidget(centralWidget);
 
-    QLabel* logoLabel = new QLabel(this);
-    QPixmap logoPixmap("/home/user/logo.png");
-    if (!logoPixmap.isNull()) {
-        logoLabel->setPixmap(logoPixmap.scaledToHeight(60, Qt::SmoothTransformation)); // 绝对锁死高度
-    } else {
-        logoLabel->setText("全国大学生集成电路创新创业大赛");
-        logoLabel->setStyleSheet("color: white; font-weight: bold; font-size: 18px;");
-    }
-    
-    QHBoxLayout* statusLayout = new QHBoxLayout;
-    statusLayout->addWidget(hardwareStatusLabel);
-    statusLayout->addWidget(tempLabel);
-    statusLayout->addWidget(cpuUsageLabel);
+  QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
+  mainLayout->setContentsMargins(15, 15, 15, 15);
+  mainLayout->setSpacing(15);
 
-    headerLayout->addWidget(logoLabel);
-    headerLayout->addStretch(); // 中间推开
-    headerLayout->addLayout(statusLayout);
+  // ==========================================
+  // 顶部 Header 区域
+  // ==========================================
+  QHBoxLayout *headerLayout = new QHBoxLayout();
 
-    // ------------------------------------------
-    // 模块 2：主体区域 (Body - 左右分栏)
-    // ------------------------------------------
-    QHBoxLayout* bodyLayout = new QHBoxLayout;
+  QLabel *logoIcon = new QLabel();
+  QPixmap logoPix("/home/user/logo.png");
+  if (logoPix.isNull()) {
+    logoIcon->setText("🛡️");
+    logoIcon->setStyleSheet("font-size: 28px; color: #F59E0B;");
+  } else {
+    logoIcon->setPixmap(
+        logoPix.scaled(36, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+  }
 
-    // 2.1 左侧：核心视频区 (视觉主权)
-    QVBoxLayout* leftLayout = new QVBoxLayout;
-    leftLayout->setContentsMargins(0, 0, 15, 0); 
-    leftLayout->addWidget(videoLabel, 1);        // 权重1：吸收剩余空间
-    leftLayout->addWidget(aiStatusLabel, 0);     // 权重0：紧贴底部
+  QLabel *titleLabel = new QLabel("PPE 智能安全监控中枢");
+  titleLabel->setStyleSheet(
+      "color: #F59E0B; font-size: 22px; font-weight: bold; margin-left: 5px;");
 
-    // 2.2 右侧：侧边栏 (日志 + 控制)
-    QWidget* rightPanel = new QWidget(this);
-    rightPanel->setMaximumWidth(320); // 物理隔离：绝不反噬视频区域
-    QVBoxLayout* rightLayout = new QVBoxLayout(rightPanel);
-    rightLayout->setContentsMargins(0, 0, 0, 0);
-    rightLayout->setAlignment(Qt::AlignTop);
+  QLabel *subtitleLabel = new QLabel("飞腾派 E2000Q · 异构四核");
+  subtitleLabel->setStyleSheet(
+      "color: #888888; font-size: 13px; margin-left: 15px; margin-top: 5px;");
 
-    QLabel* logTitle = new QLabel(" 实时违规抓拍日志", this);
-    logTitle->setStyleSheet("color: white; font-weight: bold; font-size: 14px;");
-    rightLayout->addWidget(logTitle);
-    
-    logTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents); 
-    logTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);          
-    logTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents); 
-    rightLayout->addWidget(logTable, 1); 
-    rightLayout->addSpacing(15);
+  headerLayout->addWidget(logoIcon);
+  headerLayout->addWidget(titleLabel);
+  headerLayout->addWidget(subtitleLabel);
+  headerLayout->addStretch();
 
-    QVBoxLayout* buttonLayout = new QVBoxLayout;
-    buttonLayout->addWidget(btnLiveStream);
-    buttonLayout->addWidget(btnImportVideo);
-    buttonLayout->addWidget(btnExit);
-    rightLayout->addLayout(buttonLayout);
+  // 状态指示器徽章
+  QString badgeStyle =
+      "background-color: #25201F; border: 1px solid #4A3825; border-radius: "
+      "14px; padding: 6px 14px; font-size: 12px; font-weight: bold;";
 
-    bodyLayout->addLayout(leftLayout, 1);    
-    bodyLayout->addWidget(rightPanel, 0);    
+  headerRpmsgLabel = new QLabel("● RPMsg");
+  headerRpmsgLabel->setStyleSheet(badgeStyle + "color: #10B981;");
 
-    // ------------------------------------------
-    // 模块 3：全局总装
-    // ------------------------------------------
-    QVBoxLayout* mainLayout = new QVBoxLayout;
-    mainLayout->addLayout(headerLayout, 0); // 顶栏权重0
-    mainLayout->addLayout(bodyLayout, 1);   // 主体权重1
+  headerTempLabel = new QLabel("🌡️ --.-°C");
+  headerTempLabel->setStyleSheet(badgeStyle + "color: #F59E0B;");
 
-    QWidget* centralWidget = new QWidget(this);
-    centralWidget->setLayout(mainLayout);
-    
-    // 采用护眼的工业暖米色作为全局底色
-    centralWidget->setStyleSheet("background-color: #F8F6F0; color: #2C2A29;");
-    setCentralWidget(centralWidget);
-    
-    resize(1024, 600); 
+  headerCpuLabel = new QLabel("⚡ CPU --%");
+  headerCpuLabel->setStyleSheet(badgeStyle + "color: #F59E0B;");
 
+  headerRamLabel = new QLabel("💾 42%"); // 占位
+  headerRamLabel->setStyleSheet(badgeStyle + "color: #8B5CF6;");
 
-    //5.事件绑定
-    connect(btnLiveStream, &QPushButton::clicked, this, &MainWindow::onLiveStreamClicked);
-    connect(btnImportVideo, &QPushButton::clicked, this, &MainWindow::onImportVideoClicked);
-    connect(btnExit, &QPushButton::clicked, this, &MainWindow::onExitClicked);
-    
-    connect(SignalBridge::getInstance(), &SignalBridge::sendFrame, 
-            this, &MainWindow::updateFrame, Qt::QueuedConnection);
+  headerLayout->addWidget(headerRpmsgLabel);
+  headerLayout->addSpacing(8);
+  headerLayout->addWidget(headerTempLabel);
+  headerLayout->addSpacing(8);
+  headerLayout->addWidget(headerCpuLabel);
+  headerLayout->addSpacing(8);
+  headerLayout->addWidget(headerRamLabel);
 
-    connect(SignalBridge::getInstance(), &SignalBridge::sendAlarmLog, 
-            this, &MainWindow::addLogEntry, Qt::QueuedConnection);
-            
-    connect(logTable, &QTableWidget::cellDoubleClicked, this, &MainWindow::showImageDialog);
+  mainLayout->addLayout(headerLayout);
 
-    //启动系统状态监控定时器(2秒刷新一次)
-    systemTimer = new QTimer(this);
-    connect(systemTimer, &QTimer::timeout, this, &MainWindow::updateSystemStats);
-    systemTimer->start(2000); 
-    // 接收到跨核火警信号的微秒级瞬间，立刻强制 UI 变红！
-    connect(SignalBridge::getInstance(), &SignalBridge::sendPhysicalAlarmStatus, 
-            this, [this](bool triggered){
+  // ==========================================
+  // 核心主体 (左侧视频 + 右侧数据矩阵)
+  // ==========================================
+  QHBoxLayout *bodyLayout = new QHBoxLayout();
+  bodyLayout->setSpacing(15);
+
+  // --- 左侧：视频大屏 ---
+  QFrame *videoFrame = new QFrame();
+  videoFrame->setStyleSheet("QFrame { background-color: #12100F; border: 1px "
+                            "solid #332B25; border-radius: 8px; }");
+  QVBoxLayout *videoLayout = new QVBoxLayout(videoFrame);
+  videoLayout->setContentsMargins(2, 2, 2, 2);
+
+  videoLabel = new QLabel("等待视频流接入...");
+  videoLabel->setAlignment(Qt::AlignCenter);
+  videoLabel->setScaledContents(true);
+  videoLabel->setStyleSheet("color: #666; background-color: transparent; "
+                            "border: none; font-size: 16px;");
+
+  QLabel *videoFooter =
+      new QLabel("© YOLOv8 INT8  |  ☄️ ByteTrack  |  📐 320x320  |  🧠 NCNN");
+  videoFooter->setAlignment(Qt::AlignCenter);
+  videoFooter->setStyleSheet(
+      "color: #A09080; font-size: 11px; font-weight: bold; background: "
+      "rgba(0,0,0,0.4); padding: 6px; border: none; border-bottom-left-radius: "
+      "8px; border-bottom-right-radius: 8px;");
+
+  videoLayout->addWidget(videoLabel, 1);
+  videoLayout->addWidget(videoFooter, 0);
+
+  // --- 右侧：数据矩阵看板 ---
+  QVBoxLayout *rightLayout = new QVBoxLayout();
+  rightLayout->setSpacing(12);
+  int rightPanelWidth = 420;
+
+  // Panel 1: 传感数据
+  QFrame *sensorPanel = createPanelFrame();
+  sensorPanel->setMaximumWidth(rightPanelWidth);
+  QVBoxLayout *sensorL = new QVBoxLayout(sensorPanel);
+  QLabel *sensorTitle = new QLabel("📡 从传感数据矩阵 (Core 1 裸机端赋能)");
+  sensorTitle->setStyleSheet("color: #A09080; font-size: 12px; font-weight: "
+                             "bold; border: none; padding-bottom: 5px;");
+  sensorL->addWidget(sensorTitle);
+
+  QGridLayout *sensorGrid = new QGridLayout();
+  sensorGrid->addWidget(createSensorItem("🔥 火焰探头", sensorFlame, "#10B981"),
+                        0, 0);
+  sensorGrid->addWidget(createSensorItem("💨 有害气体", sensorGas, "#10B981"),
+                        0, 1);
+  sensorGrid->addWidget(createSensorItem("🌡️ 温度", sensorTemp, "#F59E0B"), 0,
+                        2);
+  sensorGrid->addWidget(createSensorItem("💧 湿度", sensorHumid, "#3B82F6"), 1,
+                        0);
+  sensorGrid->addWidget(
+      createSensorItem("👤 人员防爆", sensorPerson, "#8B5CF6"), 1, 1);
+  sensorGrid->addWidget(createSensorItem("🔊 噪声", sensorNoise, "#10B981"), 1,
+                        2);
+  sensorL->addLayout(sensorGrid);
+
+  // Panel 2: 评分与报警灯塔
+  QHBoxLayout *scoreLightLayout = new QHBoxLayout();
+  scoreLightLayout->setSpacing(12);
+
+  QFrame *scorePanel = createPanelFrame();
+  QVBoxLayout *scoreL = new QVBoxLayout(scorePanel);
+  QLabel *scoreTitle = new QLabel("🏆 今日安全评分");
+  scoreTitle->setStyleSheet(
+      "color: #A09080; font-size: 12px; font-weight: bold; border: none;");
+  scoreWidget = new CircularScoreWidget();
+  scoreL->addWidget(scoreTitle);
+  scoreL->addWidget(scoreWidget, 0, Qt::AlignCenter);
+
+  QFrame *lightPanel = createPanelFrame();
+  QVBoxLayout *lightL = new QVBoxLayout(lightPanel);
+  QLabel *lightTitle = new QLabel("🚨 三色报警灯塔");
+  lightTitle->setStyleSheet(
+      "color: #A09080; font-size: 12px; font-weight: bold; border: none;");
+
+  QHBoxLayout *lightsGrid = new QHBoxLayout();
+  lightRed = new QLabel();
+  lightRed->setFixedSize(24, 24);
+  lightRed->setStyleSheet("background-color: #551515; border-radius: 12px; "
+                          "border: 2px solid #551515;");
+  lightYellow = new QLabel();
+  lightYellow->setFixedSize(24, 24);
+  lightYellow->setStyleSheet("background-color: #332000; border-radius: 12px; "
+                             "border: 2px solid #332000;");
+  lightGreen = new QLabel();
+  lightGreen->setFixedSize(24, 24);
+  lightGreen->setStyleSheet("background-color: #10B981; border-radius: 12px; "
+                            "border: 2px solid #6EE7B7;");
+  lightsGrid->addWidget(lightRed);
+  lightsGrid->addWidget(lightYellow);
+  lightsGrid->addWidget(lightGreen);
+  lightsGrid->setAlignment(Qt::AlignCenter);
+
+  QLabel *lightStatus = new QLabel("当前状态：● 安全");
+  lightStatus->setStyleSheet("color: #10B981; font-size: 12px; font-weight: "
+                             "bold; border: none; margin-top: 5px;");
+  lightStatus->setAlignment(Qt::AlignCenter);
+
+  lightL->addWidget(lightTitle);
+  lightL->addLayout(lightsGrid);
+  lightL->addWidget(lightStatus);
+
+  scoreLightLayout->addWidget(scorePanel, 1);
+  scoreLightLayout->addWidget(lightPanel, 1);
+
+  // Panel 3: 实时报警日志
+  QFrame *logPanel = createPanelFrame();
+  logPanel->setMaximumWidth(rightPanelWidth);
+  QVBoxLayout *logL = new QVBoxLayout(logPanel);
+  QLabel *logTitle = new QLabel("🔴 实时报警日志");
+  logTitle->setStyleSheet("color: #EF4444; font-size: 13px; font-weight: bold; "
+                          "border: none; margin-bottom: 5px;");
+
+  logTable = new QTableWidget(0, 4);
+  logTable->setHorizontalHeaderLabels({"时间", "违规类型", "来源", ""});
+  logTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+  logTable->horizontalHeader()->setSectionResizeMode(
+      3, QHeaderView::ResizeToContents);
+  logTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  logTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+  logTable->verticalHeader()->setVisible(false);
+  logTable->setShowGrid(false);
+  logTable->setStyleSheet(
+      "QTableWidget { background-color: transparent; color: #D4D4D4; border: "
+      "none; font-size: 12px; outline: none; }"
+      "QHeaderView::section { background-color: transparent; color: #A09080; "
+      "border: none; border-bottom: 1px solid #4A3825; font-weight: bold; "
+      "padding: 4px; text-align: left; }"
+      "QTableWidget::item { border-bottom: 1px solid #332B25; padding: 4px; }"
+      "QTableWidget::item:selected { background-color: rgba(245, 158, 11, "
+      "0.15); color: #F59E0B; border-radius: 4px; }");
+
+  logL->addWidget(logTitle);
+  logL->addWidget(logTable);
+
+  // Panel 4: 底座与统计
+  QHBoxLayout *bottomRow = new QHBoxLayout();
+  bottomRow->setSpacing(12);
+
+  // 4.1 左侧：本月违规统计 & 异构核心
+  QFrame *statPanel = createPanelFrame();
+  QVBoxLayout *statL = new QVBoxLayout(statPanel);
+
+  QLabel *statTitle = new QLabel("📊 本月违规统计");
+  statTitle->setStyleSheet("color: #A09080; font-size: 12px; font-weight: "
+                           "bold; border: none; margin-bottom: 5px;");
+  statL->addWidget(statTitle);
+
+  auto addStatBar = [&](const QString &name, QProgressBar *&bar, QLabel *&val,
+                        const QString &color) {
+    QHBoxLayout *l = new QHBoxLayout();
+    QLabel *n = new QLabel(name);
+    n->setStyleSheet("color: #A09080; font-size: 11px; border: none;");
+    n->setFixedWidth(65);
+    bar = createCustomProgressBar(color);
+    val = new QLabel("0");
+    val->setStyleSheet(
+        QString("color: %1; font-size: 11px; font-weight: bold; border: none;")
+            .arg(color));
+    l->addWidget(n);
+    l->addWidget(bar);
+    l->addWidget(val);
+    statL->addLayout(l);
+  };
+  addStatBar("未戴安全帽", barHelmet, lblHelmetCnt, "#EF4444");
+  addStatBar("未穿背心", barVest, lblVestCnt, "#F59E0B");
+  addStatBar("未戴护目镜", barGoggle, lblGoggleCnt, "#3B82F6");
+  addStatBar("抽烟报警", barSmoke, lblSmokeCnt, "#8B5CF6");
+
+  statL->addSpacing(10); // 分隔线距离
+
+  QLabel *sysTitle = new QLabel("💻 异构核心");
+  sysTitle->setStyleSheet("color: #A09080; font-size: 12px; font-weight: bold; "
+                          "border: none; margin-bottom: 5px;");
+  statL->addWidget(sysTitle);
+
+  QHBoxLayout *coreStatusLayout = new QHBoxLayout();
+  coreStatusLayout->setSpacing(5);
+  auto addCoreStatus = [&](const QString &text, const QString &status,
+                           const QString &color) {
+    QLabel *l = new QLabel(QString("<b style='color:#A09080'>%1</b><br><span "
+                                   "style='color:%2'>%3</span>")
+                               .arg(text, color, status));
+    l->setAlignment(Qt::AlignCenter);
+    l->setStyleSheet("background-color: #1A1615; border: 1px solid #4A3825; "
+                     "border-radius: 4px; font-size: 10px; padding: 4px;");
+    coreStatusLayout->addWidget(l);
+  };
+  addCoreStatus("Core0", "UI+IO<br>● 38°C", "#10B981");
+  addCoreStatus("Core1", "裸机<br>● 2ms", "#EF4444");
+  addCoreStatus("Core2+3", "YOLO<br>● 84%", "#F59E0B");
+  statL->addLayout(coreStatusLayout);
+
+  // 4.2 右侧：系统健康 & 通信安全
+  QVBoxLayout *rightBottomCol = new QVBoxLayout();
+  rightBottomCol->setSpacing(8);
+
+  QFrame *sysPanel = createPanelFrame();
+  QVBoxLayout *sysL = new QVBoxLayout(sysPanel);
+
+  QLabel *healthTitle = new QLabel("🏥 系统健康");
+  healthTitle->setStyleSheet("color: #A09080; font-size: 12px; font-weight: "
+                             "bold; border: none; margin-bottom: 5px;");
+  sysL->addWidget(healthTitle);
+
+  QGridLayout *metricGrid = new QGridLayout();
+  metricGrid->setVerticalSpacing(2);
+
+  auto addMetric = [&](int row, const QString &label, QLabel *&valLbl,
+                       const QString &valStr, const QString &color) {
+    QLabel *lbl = new QLabel("● " + label);
+    lbl->setStyleSheet("color:#A09080; font-size:11px; border:none;");
+    valLbl = new QLabel(valStr);
+    valLbl->setStyleSheet(
+        QString("color:%1; font-size:11px; font-weight:bold; border:none;")
+            .arg(color));
+    valLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    metricGrid->addWidget(lbl, row, 0);
+    metricGrid->addWidget(valLbl, row, 1);
+  };
+
+  addMetric(0, "AI 推理", aiLatencyLabel, "42ms", "#10B981");
+  QLabel *camLbl;
+  addMetric(1, "摄像头", camLbl, "在线", "#10B981");
+  addMetric(2, "RPMsg", rpmsgStatusLabel, "连接", "#10B981");
+  QLabel *hbLbl;
+  addMetric(3, "从核心跳", hbLbl, "正常", "#10B981");
+  QLabel *sysLoadLbl;
+  addMetric(4, "系统", sysLoadLbl, "42%", "#F59E0B");
+  sysL->addLayout(metricGrid);
+
+  sysL->addSpacing(10);
+
+  QLabel *commTitle = new QLabel("🔒 通信安全");
+  commTitle->setStyleSheet("color: #A09080; font-size: 12px; font-weight: "
+                           "bold; border: none; margin-bottom: 5px;");
+  sysL->addWidget(commTitle);
+
+  QHBoxLayout *commLayout = new QHBoxLayout();
+  QLabel *crcLbl = new QLabel(
+      "✓ CRC<br><span style='color:#A09080;font-weight:normal;'>0 次</span>");
+  crcLbl->setAlignment(Qt::AlignCenter);
+  crcLbl->setStyleSheet(
+      "color:#10B981; font-size:11px; font-weight:bold; border:none;");
+
+  QLabel *heartLbl =
+      new QLabel("心跳<br><span style='color:#F59E0B;'>✓ 在线</span>");
+  heartLbl->setAlignment(Qt::AlignCenter);
+  heartLbl->setStyleSheet(
+      "color:#A09080; font-size:11px; font-weight:bold; border:none;");
+
+  commLayout->addWidget(crcLbl);
+  commLayout->addWidget(heartLbl);
+  sysL->addLayout(commLayout);
+
+  rightBottomCol->addWidget(sysPanel);
+
+  // 5. 控制按钮组 (放在右下角)
+  QHBoxLayout *btnLayout = new QHBoxLayout();
+  btnLayout->setSpacing(5);
+  btnLiveStream = new QPushButton("● 实时监控");
+  btnImportVideo = new QPushButton("📂 导入");
+  btnExit = new QPushButton("⏻ 退出");
+
+  QString btnBase =
+      "QPushButton { color: white; font-weight: bold; border-radius: 6px; "
+      "padding: 10px 5px; border: none; font-size: 13px; }";
+  btnLiveStream->setStyleSheet(
+      btnBase + "QPushButton { background-color: #10B981; } QPushButton:hover "
+                "{ background-color: #059669; }");
+  btnImportVideo->setStyleSheet(
+      btnBase + "QPushButton { background-color: #F59E0B; } QPushButton:hover "
+                "{ background-color: #D97706; }");
+  btnExit->setStyleSheet(btnBase +
+                         "QPushButton { background-color: #EF4444; } "
+                         "QPushButton:hover { background-color: #DC2626; }");
+
+  btnLayout->addWidget(btnLiveStream);
+  btnLayout->addWidget(btnImportVideo);
+  btnLayout->addWidget(btnExit);
+
+  rightBottomCol->addLayout(btnLayout);
+
+  bottomRow->addWidget(statPanel, 5);
+  bottomRow->addLayout(rightBottomCol, 4);
+
+  // 组装 Right Layout
+  rightLayout->addWidget(sensorPanel);
+  rightLayout->addLayout(scoreLightLayout);
+  rightLayout->addWidget(logPanel, 1);
+  rightLayout->addLayout(bottomRow);
+
+  // 组装 Body Layout
+  bodyLayout->addWidget(videoFrame, 7);
+  bodyLayout->addLayout(rightLayout, 3);
+
+  mainLayout->addLayout(bodyLayout, 1);
+
+  // ==========================================
+  // 注入占位假数据 (用于视觉展示)
+  // ==========================================
+  sensorFlame->setText("● 安全");
+  sensorGas->setText("● 正常");
+  sensorTemp->setText("28.5°C");
+  sensorHumid->setText("65%");
+  sensorPerson->setText("3人");
+  sensorNoise->setText("62dB");
+
+  barHelmet->setValue(85);
+  lblHelmetCnt->setText("18");
+  barVest->setValue(60);
+  lblVestCnt->setText("12");
+  barGoggle->setValue(35);
+  lblGoggleCnt->setText("7");
+  barSmoke->setValue(10);
+  lblSmokeCnt->setText("1");
+
+  // 假日志注入
+  for (int i = 0; i < 5; i++) {
+    addLogEntry("未戴安全帽", QDateTime::currentDateTime().toString("HH:mm:ss"),
+                "");
+  }
+
+  // ==========================================
+  // 事件绑定与信号连接
+  // ==========================================
+  connect(btnLiveStream, &QPushButton::clicked, this,
+          &MainWindow::onLiveStreamClicked);
+  connect(btnImportVideo, &QPushButton::clicked, this,
+          &MainWindow::onImportVideoClicked);
+  connect(btnExit, &QPushButton::clicked, this, &MainWindow::onExitClicked);
+  connect(logTable, &QTableWidget::cellDoubleClicked, this,
+          &MainWindow::showImageDialog);
+
+  connect(SignalBridge::getInstance(), &SignalBridge::sendFrame, this,
+          &MainWindow::updateFrame, Qt::QueuedConnection);
+  connect(SignalBridge::getInstance(), &SignalBridge::sendAlarmLog, this,
+          &MainWindow::addLogEntry, Qt::QueuedConnection);
+  connect(
+      SignalBridge::getInstance(), &SignalBridge::sendPhysicalAlarmStatus, this,
+      [this](bool triggered) {
         if (triggered) {
-            hardwareStatusLabel->setText("物理警报(RPMsg): 🚨 触发！(低电平)");
-            hardwareStatusLabel->setStyleSheet("color: white; font-weight: bold; font-size: 14px; background-color: #ff4444; border-radius: 4px; padding: 4px;");
-            // 顺便让视频大边框也瞬间变红，视觉冲击力拉满
-            videoLabel->setStyleSheet("color: white; background-color: #1e1e1e; border: 6px solid #ff0000;");
+          headerRpmsgLabel->setText("● RPMsg 警报");
+          headerRpmsgLabel->setStyleSheet(
+              "background-color: #EF4444; color: white; border: 1px solid "
+              "#7F1D1D; border-radius: 14px; padding: 6px 14px; font-size: "
+              "12px; font-weight: bold;");
+          videoLabel->setStyleSheet(
+              "color: white; background-color: rgba(239, 68, 68, 0.15); "
+              "border: 2px solid #EF4444; font-size: 16px;");
+          sensorFlame->setText("🔥 警报");
+          sensorFlame->setStyleSheet("color: #EF4444; font-weight: bold; "
+                                     "font-size: 14px; border: none;");
+          scoreWidget->setScore(45, "危险 - 立即排查");
+          lightRed->setStyleSheet("background-color: #EF4444; border-radius: "
+                                  "12px; border: 2px solid #FCA5A5;");
+          lightGreen->setStyleSheet("background-color: #064E3B; border-radius: "
+                                    "12px; border: 2px solid #064E3B;");
         } else {
-            hardwareStatusLabel->setText("物理警报(RPMsg): 蜂鸣器挂起(高电平)");
-            hardwareStatusLabel->setStyleSheet("color: #059669; font-weight: bold; font-size: 14px; margin-right: 15px;");
-            videoLabel->setStyleSheet("color: white; background-color: #1e1e1e; border: 2px solid #555;");
+          headerRpmsgLabel->setText("● RPMsg 正常");
+          headerRpmsgLabel->setStyleSheet(
+              "background-color: #25201F; color: #10B981; border: 1px solid "
+              "#4A3825; border-radius: 14px; padding: 6px 14px; font-size: "
+              "12px; font-weight: bold;");
+          videoLabel->setStyleSheet(
+              "color: #666; background-color: transparent; border: none; "
+              "font-size: 16px;");
+          sensorFlame->setText("● 安全");
+          sensorFlame->setStyleSheet("color: #10B981; font-weight: bold; "
+                                     "font-size: 14px; border: none;");
+          scoreWidget->setScore(84, "良好 - 压线40分");
+          lightRed->setStyleSheet("background-color: #551515; border-radius: "
+                                  "12px; border: 2px solid #551515;");
+          lightGreen->setStyleSheet("background-color: #10B981; border-radius: "
+                                    "12px; border: 2px solid #6EE7B7;");
         }
-    }, Qt::QueuedConnection);
+      },
+      Qt::QueuedConnection);
+
+  systemTimer = new QTimer(this);
+  connect(systemTimer, &QTimer::timeout, this, &MainWindow::updateSystemStats);
+  systemTimer->start(2000);
+
+  resize(1366, 768); // 设置为接近 16:9 工业大屏比例
 }
 
 MainWindow::~MainWindow() {}
 
-void MainWindow::updateFrame(const cv::Mat& frame) {
-    if (frame.empty()) return;
+// 辅助 UI 创建函数
+QFrame *MainWindow::createPanelFrame() {
+  QFrame *frame = new QFrame();
+  frame->setStyleSheet("QFrame { background-color: #25201F; border: 1px solid "
+                       "#4A3825; border-radius: 8px; }");
+  return frame;
+}
 
-    static auto last_time = std::chrono::steady_clock::now();
-    static int frames = 0;
-    static double current_fps = 0.0;
+QWidget *MainWindow::createSensorItem(const QString &title, QLabel *&valueLabel,
+                                      const QString &color) {
+  QWidget *w = new QWidget();
+  w->setStyleSheet("border: none; background: transparent;");
+  QVBoxLayout *l = new QVBoxLayout(w);
+  l->setContentsMargins(5, 5, 5, 5);
+  l->setSpacing(4);
 
-    frames++;
-    auto now = std::chrono::steady_clock::now();
-    double elapsed = std::chrono::duration<double>(now - last_time).count();
-    
-    if (elapsed >= 1.0) {
-        current_fps = frames / elapsed;
-        frames = 0;
-        last_time = now;
-    }
+  QLabel *t = new QLabel(title);
+  t->setStyleSheet("color: #A09080; font-size: 11px; border: none;");
+  t->setAlignment(Qt::AlignCenter);
 
-    QImage img(frame.data, frame.cols, frame.rows, frame.step, QImage::Format_BGR888);
-    QPixmap pixmap = QPixmap::fromImage(img);
+  valueLabel = new QLabel("--");
+  valueLabel->setStyleSheet(
+      QString("color: %1; font-weight: bold; font-size: 15px; border: none;")
+          .arg(color));
+  valueLabel->setAlignment(Qt::AlignCenter);
 
-    QPainter painter(&pixmap);
-    painter.setFont(QFont("Arial", 16, QFont::Bold));
-    QString fpsText = QString("UI FPS: %1").arg(current_fps, 0, 'f', 1);
-    QRect textRect = pixmap.rect().adjusted(0, 15, -15, 0); 
-    painter.setPen(QColor(0, 0, 0));
-    painter.drawText(textRect.translated(2, 2), Qt::AlignTop | Qt::AlignRight, fpsText);
-    painter.setPen(QColor(0, 255, 0));
-    painter.drawText(textRect, Qt::AlignTop | Qt::AlignRight, fpsText);
-    painter.end();
+  l->addWidget(t);
+  l->addWidget(valueLabel);
+  return w;
+}
 
-    videoLabel->setPixmap(pixmap);
+QProgressBar *MainWindow::createCustomProgressBar(const QString &color) {
+  QProgressBar *bar = new QProgressBar();
+  bar->setFixedHeight(8);
+  bar->setTextVisible(false);
+  bar->setStyleSheet(
+      QString(
+          "QProgressBar { background-color: #1A1615; border: none; "
+          "border-radius: 4px; }"
+          "QProgressBar::chunk { background-color: %1; border-radius: 4px; }")
+          .arg(color));
+  return bar;
+}
+
+void MainWindow::updateFrame(const cv::Mat &frame) {
+  if (frame.empty())
+    return;
+
+  static auto last_time = std::chrono::steady_clock::now();
+  static int frames = 0;
+  static double current_fps = 0.0;
+  static bool rec_blink = false;
+
+  frames++;
+  auto now = std::chrono::steady_clock::now();
+  double elapsed = std::chrono::duration<double>(now - last_time).count();
+
+  if (elapsed >= 1.0) {
+    current_fps = frames / elapsed;
+    frames = 0;
+    last_time = now;
+    rec_blink = !rec_blink; // 每秒切换一次闪烁状态
+  }
+
+  cv::Mat displayFrame = frame.clone();
+
+  // 绘制高科技感 FPS
+  char fps_buf[32];
+  sprintf(fps_buf, "FPS: %.1f", current_fps);
+  cv::rectangle(displayFrame, cv::Rect(displayFrame.cols - 110, 10, 100, 30),
+                cv::Scalar(11, 158, 245), -1); // BGR: F59E0B
+  cv::putText(displayFrame, fps_buf, cv::Point(displayFrame.cols - 100, 32),
+              cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 2);
+
+  // 绘制左上角 REC 录制指示
+  if (rec_blink) {
+    cv::circle(displayFrame, cv::Point(30, 25), 6, cv::Scalar(68, 68, 239),
+               -1); // BGR: EF4444
+  }
+  cv::putText(displayFrame, "REC", cv::Point(45, 32), cv::FONT_HERSHEY_SIMPLEX,
+              0.6, cv::Scalar(68, 68, 239), 2);
+
+  QImage img(displayFrame.data, displayFrame.cols, displayFrame.rows,
+             displayFrame.step, QImage::Format_BGR888);
+  videoLabel->setPixmap(QPixmap::fromImage(img));
 }
 
 void MainWindow::addLogEntry(QString type, QString time, QString imgPath) {
-    logTable->insertRow(0); 
-    logTable->setItem(0, 0, new QTableWidgetItem(time));
-    logTable->setItem(0, 1, new QTableWidgetItem(type));
-    
-    QTableWidgetItem* statusItem = new QTableWidgetItem("🔍 双击查看图片");
-    statusItem->setForeground(QBrush(Qt::cyan));
-    
-    statusItem->setData(Qt::UserRole, imgPath); 
-    
-    logTable->setItem(0, 2, statusItem);
+  logTable->insertRow(0);
+  logTable->setItem(0, 0, new QTableWidgetItem(time));
+  logTable->setItem(0, 1, new QTableWidgetItem(type));
 
-    if (logTable->rowCount() > 50) {
-        logTable->removeRow(50);
-    }
+  // 模拟来源
+  QString source = "AI 视觉";
+  if (type == "未戴安全帽" || type == "未穿背心")
+    source = "AI 视觉";
+  else if (type == "底座火焰触发")
+    source = "从核 GPIO";
+  else
+    source = "多模态感知";
+
+  logTable->setItem(0, 2, new QTableWidgetItem(source));
+
+  QTableWidgetItem *statusItem = new QTableWidgetItem("🔍");
+  statusItem->setTextAlignment(Qt::AlignCenter);
+  statusItem->setForeground(QBrush(QColor("#3B82F6")));
+  statusItem->setData(Qt::UserRole, imgPath);
+  logTable->setItem(0, 3, statusItem);
+
+  if (logTable->rowCount() > 50) {
+    logTable->removeRow(50);
+  }
 }
 
 void MainWindow::showImageDialog(int row, int column) {
-    QTableWidgetItem* item = logTable->item(row, 2);
-    if (!item) return;
-    QString imgPath = item->data(Qt::UserRole).toString();
-    
-    QImage img(imgPath);
-    if(img.isNull()) {
-        QMessageBox::warning(this, "提示", "图片已被系统自动清理或尚未写入磁盘！");
-        return;
-    }
-    
-    QDialog dialog(this);
-    dialog.setWindowTitle("抓拍证据回放 - " + logTable->item(row, 0)->text());
-    dialog.setStyleSheet("background-color: #2b2b2b; color: white;");
-    
-    QLabel* imgLabel = new QLabel(&dialog);
-    imgLabel->setPixmap(QPixmap::fromImage(img).scaled(800, 600, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    
-    QVBoxLayout* layout = new QVBoxLayout(&dialog);
-    layout->addWidget(imgLabel);
-    
-    dialog.exec(); 
+  QTableWidgetItem *item = logTable->item(row, 3);
+  if (!item)
+    return;
+  QString imgPath = item->data(Qt::UserRole).toString();
+
+  QImage img(imgPath);
+  if (img.isNull()) {
+    // QMessageBox::warning(this, "提示",
+    // "图片已被系统自动清理或尚未写入磁盘！");
+    // 为了美观展示，如果没有图片我们暂不弹丑陋的系统框
+    return;
+  }
+
+  QDialog dialog(this);
+  dialog.setWindowTitle("抓拍证据回放 - " + logTable->item(row, 0)->text());
+  dialog.setStyleSheet(
+      "background-color: #1A1615; color: white; border: 1px solid #4A3825;");
+
+  QLabel *imgLabel = new QLabel(&dialog);
+  imgLabel->setPixmap(QPixmap::fromImage(img).scaled(
+      800, 600, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+
+  QVBoxLayout *layout = new QVBoxLayout(&dialog);
+  layout->addWidget(imgLabel);
+
+  dialog.exec();
 }
 
 void MainWindow::onLiveStreamClicked() {
-    if (current_source_mode == 0) return;
-    current_source_mode = 0;
-    source_changed = true;
-    btnLiveStream->setText(" 监控中...");
-    btnImportVideo->setText(" 导入录像");
+  if (current_source_mode == 0)
+    return;
+  current_source_mode = 0;
+  source_changed = true;
+  btnLiveStream->setText("● 监控中...");
+  btnLiveStream->setStyleSheet(
+      "QPushButton { color: white; font-weight: bold; border-radius: 6px; "
+      "padding: 10px; border: none; font-size: 14px; background-color: "
+      "#059669; }");
+  btnImportVideo->setText("📂 导入");
 }
 
 void MainWindow::onImportVideoClicked() {
-    QString fileName = QFileDialog::getOpenFileName(this, "选择测试视频", "", "Video Files (*.mp4 *.avi)");
-    if (fileName.isEmpty()) return;
+  QString fileName = QFileDialog::getOpenFileName(this, "选择测试视频", "",
+                                                  "Video Files (*.mp4 *.avi)");
+  if (fileName.isEmpty())
+    return;
 
-    video_path = fileName.toStdString();
-    current_source_mode = 1;
-    source_changed = true;
-    btnImportVideo->setText("分析中...");
-    btnLiveStream->setText(" 实时监控");
+  video_path = fileName.toStdString();
+  current_source_mode = 1;
+  source_changed = true;
+  btnImportVideo->setText("🔄 分析中...");
+  btnLiveStream->setText("● 实时监控");
+  btnLiveStream->setStyleSheet(
+      "QPushButton { color: white; font-weight: bold; border-radius: 6px; "
+      "padding: 10px; border: none; font-size: 14px; background-color: "
+      "#10B981; }");
 }
 
 void MainWindow::onExitClicked() {
-    is_running = false; 
-    QApplication::quit();
+  is_running = false;
+  QApplication::quit();
 }
 
-// ==========================================
-// 【综合系统监控】：读取 CPU 温度与综合使用率
-// ==========================================
 void MainWindow::updateSystemStats() {
-    // 1. 读取温度
-    QFile tempFile("/sys/class/thermal/thermal_zone0/temp");
-    if (tempFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QTextStream in(&tempFile);
-        QString line = in.readLine();
-        if (!line.isNull()) {
-            double temp = line.toDouble() / 1000.0;
-            tempLabel->setText(QString("温度: %1 °C").arg(temp, 0, 'f', 1));
-            
-            if (temp >= 75.0) {
-                tempLabel->setStyleSheet("color: #ff4444; font-weight: bold; font-size: 16px; padding: 2px;"); 
-            } else if (temp >= 65.0) {
-                tempLabel->setStyleSheet("color: #ffbb33; font-weight: bold; font-size: 16px; padding: 2px;"); 
-            } else {
-                tempLabel->setStyleSheet("color: #00C851; font-weight: bold; font-size: 16px; padding: 2px;"); 
-            }
-        }
-        tempFile.close();
+  // 1. 读取温度
+  QFile tempFile("/sys/class/thermal/thermal_zone0/temp");
+  if (tempFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    QTextStream in(&tempFile);
+    QString line = in.readLine();
+    if (!line.isNull()) {
+      double temp = line.toDouble() / 1000.0;
+      headerTempLabel->setText(QString("🌡️ %1 °C").arg(temp, 0, 'f', 1));
+      sensorTemp->setText(QString("%1 °C").arg(temp, 0, 'f', 1));
+
+      QString badgeStyle = "background-color: #25201F; border: 1px solid "
+                           "#4A3825; border-radius: 14px; padding: 6px 14px; "
+                           "font-size: 12px; font-weight: bold;";
+      if (temp >= 75.0) {
+        headerTempLabel->setStyleSheet(badgeStyle + "color: #EF4444;");
+        sensorTemp->setStyleSheet("color: #EF4444; font-weight: bold; "
+                                  "font-size: 15px; border: none;");
+      } else if (temp >= 65.0) {
+        headerTempLabel->setStyleSheet(badgeStyle + "color: #F59E0B;");
+        sensorTemp->setStyleSheet("color: #F59E0B; font-weight: bold; "
+                                  "font-size: 15px; border: none;");
+      } else {
+        headerTempLabel->setStyleSheet(badgeStyle + "color: #10B981;");
+        sensorTemp->setStyleSheet("color: #10B981; font-weight: bold; "
+                                  "font-size: 15px; border: none;");
+      }
     }
+    tempFile.close();
+  }
 
-    // 2.读取CPU使用率(解析 /proc/stat)
-    QFile statFile("/proc/stat");
-    if (statFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QTextStream in(&statFile);
-        QString line = in.readLine(); // 读取第一行 "cpu ..."
-        
-        if (!line.isNull() && line.startsWith("cpu ")) {
-            // 用简化方法清理多余空格并分割
-            QStringList parts = line.simplified().split(' ');
-            
-            if (parts.size() > 4) {
-                unsigned long long user = parts[1].toULongLong();
-                unsigned long long nice = parts[2].toULongLong();
-                unsigned long long system = parts[3].toULongLong();
-                unsigned long long idle = parts[4].toULongLong();
-                unsigned long long iowait = parts[5].toULongLong();
-                unsigned long long irq = parts[6].toULongLong();
-                unsigned long long softirq = parts[7].toULongLong();
+  // 2. 读取 CPU 使用率
+  QFile statFile("/proc/stat");
+  if (statFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    QTextStream in(&statFile);
+    QString line = in.readLine();
+    if (!line.isNull() && line.startsWith("cpu ")) {
+      QStringList parts = line.simplified().split(' ');
+      if (parts.size() > 4) {
+        unsigned long long user = parts[1].toULongLong();
+        unsigned long long nice = parts[2].toULongLong();
+        unsigned long long system = parts[3].toULongLong();
+        unsigned long long idle = parts[4].toULongLong();
+        unsigned long long iowait = parts[5].toULongLong();
+        unsigned long long irq = parts[6].toULongLong();
+        unsigned long long softirq = parts[7].toULongLong();
 
-                unsigned long long totalIdle = idle + iowait;
-                unsigned long long totalNonIdle = user + nice + system + irq + softirq;
-                unsigned long long total = totalIdle + totalNonIdle;
+        unsigned long long totalIdle = idle + iowait;
+        unsigned long long totalNonIdle = user + nice + system + irq + softirq;
+        unsigned long long total = totalIdle + totalNonIdle;
 
-                // 计算时间差 Delta
-                if (prevTotalTicks != 0) {
-                    unsigned long long totalDiff = total - prevTotalTicks;
-                    unsigned long long idleDiff = totalIdle - prevIdleTicks;
-                    
-                    double usage = 100.0 * (totalDiff - idleDiff) / (double)totalDiff;
-                    
-                    cpuUsageLabel->setText(QString("CPU: %1%").arg(usage, 0, 'f', 1));
-                    
-                    // 同样加入动态变色预警
-                    if (usage >= 90.0) {
-                        cpuUsageLabel->setStyleSheet("color: #ff4444; font-weight: bold; font-size: 16px; padding: 2px; margin-left: 15px;");
-                    } else if (usage >= 70.0) {
-                        cpuUsageLabel->setStyleSheet("color: #ffbb33; font-weight: bold; font-size: 16px; padding: 2px; margin-left: 15px;");
-                    } else {
-                        cpuUsageLabel->setStyleSheet("color: #00C851; font-weight: bold; font-size: 16px; padding: 2px; margin-left: 15px;");
-                    }
-                }
-                
-                // 保存当前状态供下次计算使用
-                prevTotalTicks = total;
-                prevIdleTicks = totalIdle;
-            }
+        if (prevTotalTicks != 0) {
+          unsigned long long totalDiff = total - prevTotalTicks;
+          unsigned long long idleDiff = totalIdle - prevIdleTicks;
+          double usage = 100.0 * (totalDiff - idleDiff) / (double)totalDiff;
+
+          headerCpuLabel->setText(QString("⚡ CPU %1%").arg(usage, 0, 'f', 1));
+
+          QString badgeStyle = "background-color: #25201F; border: 1px solid "
+                               "#4A3825; border-radius: 14px; padding: 6px "
+                               "14px; font-size: 12px; font-weight: bold;";
+          if (usage >= 90.0)
+            headerCpuLabel->setStyleSheet(badgeStyle + "color: #EF4444;");
+          else if (usage >= 70.0)
+            headerCpuLabel->setStyleSheet(badgeStyle + "color: #F59E0B;");
+          else
+            headerCpuLabel->setStyleSheet(badgeStyle + "color: #10B981;");
         }
-        statFile.close();
+        prevTotalTicks = total;
+        prevIdleTicks = totalIdle;
+      }
     }
-      // ==========================================
-   
-
+    statFile.close();
+  }
 }
