@@ -6,7 +6,6 @@
 #include <mutex>
 #include <thread> // 新增
 
-
 // 采用单例模式管理底层唯一的物理通道
 class RPMsgController {
 public:

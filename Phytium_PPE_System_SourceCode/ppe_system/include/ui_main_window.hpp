@@ -70,6 +70,7 @@ private slots:
   void onImportVideoClicked();
   void showImageDialog(int row, int column);
   void updateSystemStats();
+  void showDeepSeekSuggestion(const QString &text);
 
 private:
   // 辅助函数：创建统一样式的面板卡片
@@ -86,6 +87,9 @@ private:
 
   // --- 左侧主视觉 ---
   QLabel *videoLabel;
+
+  // --- 中间 DeepSeek ---
+  QLabel *dsContent;
 
   // --- 右侧数据矩阵 ---
   // 1. 传感数据

@@ -111,7 +111,11 @@ void RPMsgController::cleanup() {
 }
 
 // ==========================================
-// 【架构终局】：时空解耦的非对称防抖状态机
+// 【架构终局】：工业级非对称滞回防抖状态机
+// ==========================================
+// 设计思想：
+//   触发要"慢"：连续收到 N 次火警才确认（防止电磁干扰误报）
+//   解除要"更慢"：必须沉默 T 秒才解除（防止信号间隙导致红绿闪烁）
 // ==========================================
 void RPMsgController::rx_task() {
   data_packet pkt;
@@ -119,7 +123,14 @@ void RPMsgController::rx_task() {
   pfd.fd = rpmsg_fd;
   pfd.events = POLLIN;
 
-  auto last_alarm_time = std::chrono::steady_clock::now();
+  // --- 防抖核心参数 ---
+  constexpr int CONFIRM_COUNT = 3; // 触发阈值：连续收到 3 次火警信号才确认
+  constexpr int RELEASE_TIMEOUT_MS = 3000; // 解除阈值：沉默 3 秒才解除报警
+  constexpr int CONFIRM_WINDOW_MS = 2000; // 确认窗口：3 次信号必须在 2 秒内完成
+
+  int fire_count = 0;                                      // 累计收到的火警计数
+  auto first_fire_time = std::chrono::steady_clock::now(); // 第一次火警的时间
+  auto last_fire_time = std::chrono::steady_clock::now();  // 最近一次火警的时间
 
   while (rx_running) {
     if (rpmsg_fd < 0) {
@@ -127,37 +138,65 @@ void RPMsgController::rx_task() {
       continue;
     }
 
-    // 维度 1：空间（数据流）- 绝对敏锐的触发器
-    // 平时 200ms 唤醒一次，火警时 20ms 唤醒一次，将系统调用降低 90% 以上
-    int timeout_ms = is_physical_alarm ? 20 : 200;
+    // 平时 200ms 轮询一次，报警中 50ms 轮询一次
+    int timeout_ms = is_physical_alarm ? 50 : 200;
     int ret = poll(&pfd, 1, timeout_ms);
 
     if (ret > 0 && (pfd.revents & POLLIN)) {
       int n = read(rpmsg_fd, &pkt, sizeof(data_packet));
-      // 只要读到有效数据，且是火警 '1'
+
       if (n > 0 && pkt.command == DEVICE_CORE_FIRE_REPORT &&
           pkt.data[0] == '1') {
-        // 瞬间续命：只要看到一丝火光，立刻刷新时间戳！
-        last_alarm_time = std::chrono::steady_clock::now();
 
-        if (!is_physical_alarm) {
+        auto now = std::chrono::steady_clock::now();
+
+        // 如果已经在报警中，只需要续命（刷新最后一次火警时间）
+        if (is_physical_alarm) {
+          last_fire_time = now;
+          continue;
+        }
+
+        // --- 尚未报警：执行计数确认逻辑 ---
+        // 如果距离第一次计数已经超过确认窗口，重新开始计数
+        auto elapsed_since_first =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - first_fire_time)
+                .count();
+
+        if (fire_count == 0 || elapsed_since_first > CONFIRM_WINDOW_MS) {
+          // 重置计数器，从头开始
+          fire_count = 1;
+          first_fire_time = now;
+        } else {
+          fire_count++;
+        }
+
+        last_fire_time = now;
+
+        // 达到阈值 → 确认火警！
+        if (fire_count >= CONFIRM_COUNT) {
           is_physical_alarm = true;
-          // 零延迟瞬间发报，UI 爆红
+          fire_count = 0; // 重置计数器，为下次做好准备
+          printf("🔥 [火警确认] 连续 %d 次信号确认，拉响警报！\n",
+                 CONFIRM_COUNT);
           emit SignalBridge::getInstance() -> sendPhysicalAlarmStatus(true);
+        } else {
+          printf("🔸 [火警预警] 收到第 %d/%d 次信号，等待确认...\n", fire_count,
+                 CONFIRM_COUNT);
         }
       }
     }
 
-    // 维度 2：时间（时钟流）- 独立且强粘滞的解除器
-    // 无论 read() 有没有读到数据，只要当前还在报警，时间就必须流逝！
+    // --- 解除逻辑：必须沉默足够长时间才能解除 ---
     if (is_physical_alarm) {
       auto now = std::chrono::steady_clock::now();
-      // 通过真实时间差校验，500毫秒内未收到火警信号，则解除报警
-      if (std::chrono::duration_cast<std::chrono::milliseconds>(now -
-                                                                last_alarm_time)
-              .count() >= 500) {
+      auto silence_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            now - last_fire_time)
+                            .count();
+
+      if (silence_ms >= RELEASE_TIMEOUT_MS) {
         is_physical_alarm = false;
-        // 彻底解除，UI 恢复绿色
+        printf("✅ [火警解除] 已沉默 %dms，恢复正常状态\n", RELEASE_TIMEOUT_MS);
         emit SignalBridge::getInstance() -> sendPhysicalAlarmStatus(false);
       }
     }

@@ -173,14 +173,33 @@ MainWindow::MainWindow(QWidget *parent)
   videoLayout->addWidget(videoLabel, 1);
   videoLayout->addWidget(videoFooter, 0);
 
+  // --- 中间：DeepSeek AI 顾问区 ---
+  QFrame *dsPanel = new QFrame();
+  dsPanel->setStyleSheet("QFrame { background-color: #12100F; border: 1px "
+                         "solid #1E3A8A; border-radius: 8px; }");
+  QVBoxLayout *dsLayout = new QVBoxLayout(dsPanel);
+  dsLayout->setContentsMargins(15, 15, 15, 15);
+  dsLayout->setSpacing(10);
+
+  QLabel *dsTitle = new QLabel("🤖 DeepSeek AI 安全顾问");
+  dsTitle->setStyleSheet("color: #60A5FA; font-size: 16px; font-weight: bold; "
+                         "border: none; margin-bottom: 5px;");
+
+  dsContent = new QLabel("系统正在监控中...\nAI将在此为您提供专业的实时建议。");
+  dsContent->setWordWrap(true);
+  dsContent->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+  dsContent->setStyleSheet("color: #E5E7EB; font-size: 13px; border: none; "
+                           "background: transparent; line-height: 1.5;");
+
+  dsLayout->addWidget(dsTitle, 0);
+  dsLayout->addWidget(dsContent, 1);
+
   // --- 右侧：数据矩阵看板 ---
   QVBoxLayout *rightLayout = new QVBoxLayout();
   rightLayout->setSpacing(12);
-  int rightPanelWidth = 420;
 
   // Panel 1: 传感数据
   QFrame *sensorPanel = createPanelFrame();
-  sensorPanel->setMaximumWidth(rightPanelWidth);
   QVBoxLayout *sensorL = new QVBoxLayout(sensorPanel);
   QLabel *sensorTitle = new QLabel("📡 从传感数据矩阵 (Core 1 裸机端赋能)");
   sensorTitle->setStyleSheet("color: #A09080; font-size: 12px; font-weight: "
@@ -253,7 +272,6 @@ MainWindow::MainWindow(QWidget *parent)
 
   // Panel 3: 实时报警日志
   QFrame *logPanel = createPanelFrame();
-  logPanel->setMaximumWidth(rightPanelWidth);
   QVBoxLayout *logL = new QVBoxLayout(logPanel);
   QLabel *logTitle = new QLabel("🔴 实时报警日志");
   logTitle->setStyleSheet("color: #EF4444; font-size: 13px; font-weight: bold; "
@@ -432,15 +450,21 @@ MainWindow::MainWindow(QWidget *parent)
   bottomRow->addWidget(statPanel, 5);
   bottomRow->addLayout(rightBottomCol, 4);
 
+  // 中间：日志与 DeepSeek 左右分栏并排
+  QHBoxLayout *logAndDsLayout = new QHBoxLayout();
+  logAndDsLayout->setSpacing(12);
+  logAndDsLayout->addWidget(logPanel, 1);
+  logAndDsLayout->addWidget(dsPanel, 1);
+
   // 组装 Right Layout
   rightLayout->addWidget(sensorPanel);
   rightLayout->addLayout(scoreLightLayout);
-  rightLayout->addWidget(logPanel, 1);
+  rightLayout->addLayout(logAndDsLayout, 1);
   rightLayout->addLayout(bottomRow);
 
-  // 组装 Body Layout
-  bodyLayout->addWidget(videoFrame, 7);
-  bodyLayout->addLayout(rightLayout, 3);
+  // 组装 Body Layout (左侧 60% 纯视频，右侧 40% 综合面板)
+  bodyLayout->addWidget(videoFrame, 6);
+  bodyLayout->addLayout(rightLayout, 4);
 
   mainLayout->addLayout(bodyLayout, 1);
 
@@ -645,6 +669,41 @@ void MainWindow::addLogEntry(QString type, QString time, QString imgPath) {
 
   if (logTable->rowCount() > 50) {
     logTable->removeRow(50);
+  }
+
+  // 触发 DeepSeek 的实时建议 (根据违规类型给出不同的预设文本)
+  if (type == "未戴安全帽" || type == "未穿背心" || type == "未戴护目镜") {
+    showDeepSeekSuggestion(
+        QString("【安全警告】检测到人员 %1。\n\n"
+                "🚨 风险评估：\n存在高危作业风险，极易造成严重人身伤害。\n\n"
+                "🛠️ 整改建议：\n"
+                "1. 立即通过广播或对讲机制止该人员的违章作业。\n"
+                "2. 责令其立即按规定佩戴个人防护装备（PPE）。\n"
+                "3. 将本次违章行为记录在案，并在每日安全晨会上进行通报批评。")
+            .arg(type));
+  } else if (type == "抽烟报警") {
+    showDeepSeekSuggestion(
+        "【火灾隐患警告】检测到违规抽烟。\n\n"
+        "🚨 "
+        "风险评估：\n作业现场可能存在易燃易爆物品，抽烟极易引发火灾或爆炸。\n\n"
+        "🛠️ 整改建议：\n"
+        "1. 立即上前制止，要求掐灭烟头。\n"
+        "2. 检查周围是否有易燃物，确认无火灾隐患。\n"
+        "3. 对当事人进行严厉的安全警告及处罚。");
+  } else if (type == "底层火警探头" || type == "底座火焰触发") {
+    showDeepSeekSuggestion("【最高级别警报】底层传感器检测到物理火警！\n\n"
+                           "🚨 风险评估：\n极度危险，可能发生大规模火灾！\n\n"
+                           "🛠️ 应急指导：\n"
+                           "1. 立即启动全厂消防警报，疏散所有人员。\n"
+                           "2. 切断起火区域的非消防电源。\n"
+                           "3. 若火势无法控制，立即拨打 119。");
+  }
+}
+
+void MainWindow::showDeepSeekSuggestion(const QString &text) {
+  // 最简单的静态文本更新，绝不会引发内存崩溃
+  if (dsContent) {
+    dsContent->setText(text);
   }
 }
 

@@ -44,7 +44,7 @@ int main(int argc, char *argv[]) {
 
   // 4.显示控制台界面
   MainWindow window;
-  window.show();
+  window.showFullScreen();
 
   // 5.0号核在此处陷入死循环，疯狂响应按钮点击和画图请求
   return app.exec();
