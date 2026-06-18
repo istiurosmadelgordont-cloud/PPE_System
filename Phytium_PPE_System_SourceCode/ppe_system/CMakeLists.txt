@@ -22,7 +22,7 @@ set(CMAKE_AUTOUIC ON)
 set(ncnn_DIR "/home/user/ncnn/build/install/lib/cmake/ncnn")
 find_package(ncnn REQUIRED)
 find_package(OpenCV REQUIRED)
-find_package(Qt5 COMPONENTS Widgets REQUIRED)
+find_package(Qt5 COMPONENTS Widgets Network REQUIRED)
 find_package(Eigen3 REQUIRED) # 【新增】：告诉 CMake 去系统里找 Eigen3
 
 # ==========================================
@@ -47,6 +47,7 @@ target_link_libraries(ppe_system
     ncnn 
     ${OpenCV_LIBS} 
     Qt5::Widgets 
+    Qt5::Network
     pthread
     Eigen3::Eigen # 【新增】：链接 Eigen3 数学核心
 )

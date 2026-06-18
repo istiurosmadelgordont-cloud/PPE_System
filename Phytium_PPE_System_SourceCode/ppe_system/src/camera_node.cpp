@@ -103,9 +103,7 @@ void camera_thread_func() {
     // 【Bug 修复】：消灭双重 clone，只拷贝一次
     cv::Mat push_frame = tmp_frame.clone();
     if (!cap_queue.push(push_frame)) {
-      cv::Mat trash;
-      cap_queue.pop(trash);
-      cap_queue.push(push_frame);
+      // 严格遵循 SPSC 无锁队列要求：满载时直接丢弃新帧，生产者绝对不能调用 pop()，否则会导致 Segmentation fault
     }
   }
   cap.release();

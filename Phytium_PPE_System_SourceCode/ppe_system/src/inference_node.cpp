@@ -226,12 +226,10 @@ void inference_thread_func() {
         auto it = alarmed_ids.find(track_id);
         if (it == alarmed_ids.end() || !it->second) {
 
-          // 无锁队列如果满载主动覆盖（挤压淘汰机制）
+          // 遵守 SPSC 规则：无锁队列满载时丢弃新报警事件，避免生产者调用 pop() 导致头指针损坏（Segmentation fault）
           AlarmEvent event = {frame.clone(), v_name, now, now, 0};
           if (!alarm_queue.push(event)) {
-            AlarmEvent trash;
-            alarm_queue.pop(trash);
-            alarm_queue.push(event);
+            printf("⚠️ [报警] IO队列已满，丢弃此次违规事件抓拍。\n");
           }
           alarmed_ids[track_id] = true;
 
@@ -310,9 +308,7 @@ void inference_thread_func() {
               .count() > 3) {
         AlarmEvent event = {frame.clone(), "底层火警探头", now_p, now_p, 0};
         if (!alarm_queue.push(event)) {
-          AlarmEvent trash;
-          alarm_queue.pop(trash);
-          alarm_queue.push(event);
+          printf("⚠️ [报警] IO队列已满，丢弃火警事件抓拍。\n");
         }
         last_fire_snap = now_p;
         printf("📸 [异构联动] 物理火警已触发，强制抓拍留存证据！\n");

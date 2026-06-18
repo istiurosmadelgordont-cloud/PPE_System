@@ -24,6 +24,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <opencv2/opencv.hpp>
+#include "deepseek_worker.hpp"
 
 // ==========================================
 // 跨线程通信桥梁：大核 AI -> 小核 UI
@@ -88,6 +89,8 @@ private slots:
   void showImageDialog(int row, int column);
   void updateSystemStats();
   void showDeepSeekSuggestion(const QString &text);
+  void onDeepSeekAnalysisStarted();
+  void onDeepSeekAnalysisFinished(const QString &advice);
 
 private:
   // 辅助函数：创建统一样式的面板卡片
@@ -150,4 +153,5 @@ private:
   QTimer *systemTimer;
   unsigned long long prevTotalTicks;
   unsigned long long prevIdleTicks;
+  DeepSeekWorker *dsWorker;
 };

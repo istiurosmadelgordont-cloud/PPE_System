@@ -88,6 +88,11 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), prevTotalTicks(0), prevIdleTicks(0) {
   qRegisterMetaType<cv::Mat>("cv::Mat");
 
+  // 初始化 DeepSeek AI 安全顾问异步 Worker (必须在早期初始化，以防 dummy log 注入时为空指针)
+  dsWorker = new DeepSeekWorker(this);
+  connect(dsWorker, &DeepSeekWorker::analysisStarted, this, &MainWindow::onDeepSeekAnalysisStarted);
+  connect(dsWorker, &DeepSeekWorker::analysisFinished, this, &MainWindow::onDeepSeekAnalysisFinished);
+
   // 1. 全局样式设置 (暗黑工业风)
   this->setStyleSheet("QMainWindow { background-color: #1A1615; font-family: "
                       "'Segoe UI', 'Microsoft YaHei', sans-serif; }");
@@ -656,15 +661,22 @@ void MainWindow::updateFrame(const cv::Mat &frame) {
 }
 
 void MainWindow::addLogEntry(QString type, QString time, QString imgPath) {
+  // 英文标签翻译为中文
+  if (type == "Without Helmet") type = "未戴安全帽";
+  else if (type == "Without Glass") type = "未戴护目镜";
+  else if (type == "Without Glove") type = "未戴手套";
+  else if (type == "Without Safety Vest") type = "未穿背心";
+  else if (type == "底层物理火警") type = "底层火警探头";
+
   logTable->insertRow(0);
   logTable->setItem(0, 0, new QTableWidgetItem(time));
   logTable->setItem(0, 1, new QTableWidgetItem(type));
 
   // 模拟来源
   QString source = "AI 视觉";
-  if (type == "未戴安全帽" || type == "未穿背心")
+  if (type == "未戴安全帽" || type == "未穿背心" || type == "未戴护目镜" || type == "未戴手套")
     source = "AI 视觉";
-  else if (type == "底座火焰触发")
+  else if (type == "底座火焰触发" || type == "底层火警探头")
     source = "从核 GPIO";
   else
     source = "多模态感知";
@@ -681,32 +693,11 @@ void MainWindow::addLogEntry(QString type, QString time, QString imgPath) {
     logTable->removeRow(50);
   }
 
-  // 触发 DeepSeek 的实时建议 (根据违规类型给出不同的预设文本)
-  if (type == "未戴安全帽" || type == "未穿背心" || type == "未戴护目镜") {
-    showDeepSeekSuggestion(
-        QString("【安全警告】检测到人员 %1。\n\n"
-                "🚨 风险评估：\n存在高危作业风险，极易造成严重人身伤害。\n\n"
-                "🛠️ 整改建议：\n"
-                "1. 立即通过广播或对讲机制止该人员的违章作业。\n"
-                "2. 责令其立即按规定佩戴个人防护装备（PPE）。\n"
-                "3. 将本次违章行为记录在案，并在每日安全晨会上进行通报批评。")
-            .arg(type));
-  } else if (type == "抽烟报警") {
-    showDeepSeekSuggestion(
-        "【火灾隐患警告】检测到违规抽烟。\n\n"
-        "🚨 "
-        "风险评估：\n作业现场可能存在易燃易爆物品，抽烟极易引发火灾或爆炸。\n\n"
-        "🛠️ 整改建议：\n"
-        "1. 立即上前制止，要求掐灭烟头。\n"
-        "2. 检查周围是否有易燃物，确认无火灾隐患。\n"
-        "3. 对当事人进行严厉的安全警告及处罚。");
-  } else if (type == "底层火警探头" || type == "底座火焰触发") {
-    showDeepSeekSuggestion("【最高级别警报】底层传感器检测到物理火警！\n\n"
-                           "🚨 风险评估：\n极度危险，可能发生大规模火灾！\n\n"
-                           "🛠️ 应急指导：\n"
-                           "1. 立即启动全厂消防警报，疏散所有人员。\n"
-                           "2. 切断起火区域的非消防电源。\n"
-                           "3. 若火势无法控制，立即拨打 119。");
+  // 触发 DeepSeek AI 安全顾问异步分析
+  if (type == "未戴安全帽" || type == "未穿背心" || type == "未戴护目镜" || 
+      type == "未戴手套" || type == "抽烟报警" || type == "底层火警探头" || 
+      type == "底座火焰触发") {
+    dsWorker->requestAdvice(type);
   }
 }
 
@@ -714,6 +705,18 @@ void MainWindow::showDeepSeekSuggestion(const QString &text) {
   // 最简单的静态文本更新，绝不会引发内存崩溃
   if (dsContent) {
     dsContent->setText(text);
+  }
+}
+
+void MainWindow::onDeepSeekAnalysisStarted() {
+  if (dsContent) {
+    dsContent->setText("<p style='color: #60A5FA; font-weight: bold;'>🤖 DeepSeek 正在分析中...</p>");
+  }
+}
+
+void MainWindow::onDeepSeekAnalysisFinished(const QString &advice) {
+  if (dsContent) {
+    dsContent->setText(advice);
   }
 }
 
