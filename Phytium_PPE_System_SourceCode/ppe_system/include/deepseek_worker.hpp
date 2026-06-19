@@ -62,4 +62,5 @@ private:
   // 请求 API 配置
   QString m_apiUrl;
   QString m_apiKey;
+  QString m_modelName;
 };

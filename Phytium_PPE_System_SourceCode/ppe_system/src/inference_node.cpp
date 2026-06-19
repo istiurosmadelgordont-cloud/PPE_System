@@ -332,6 +332,7 @@ void inference_thread_func() {
     }
 
     // 零拷贝渲染：直接将帧交给主线程 UI
+    emit SignalBridge::getInstance() -> sendAiMetrics((int)cost, (int)output_stracks.size());
     emit SignalBridge::getInstance() -> sendFrame(frame);
 
     // 系统内存守护：定期清理过期的历史追踪 ID

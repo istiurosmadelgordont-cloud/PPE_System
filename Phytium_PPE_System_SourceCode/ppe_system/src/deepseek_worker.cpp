@@ -3,7 +3,7 @@
  * @brief     DeepSeek AI 安全顾问异步请求与降级机制实现
  * @author    [双生序章] 团队
  * @version   3.1.0
- * @date      2026-06-18
+ * @date      2026-06-19
  */
 
 #include "deepseek_worker.hpp"
@@ -29,6 +29,7 @@ DeepSeekWorker::DeepSeekWorker(QObject *parent)
   QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
   m_apiUrl = env.value("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions");
   m_apiKey = env.value("DEEPSEEK_API_KEY", "");
+  m_modelName = env.value("DEEPSEEK_MODEL", "deepseek-v4-flash");
 }
 
 bool DeepSeekWorker::isNetworkAvailable() {
@@ -56,6 +57,8 @@ bool DeepSeekWorker::isNetworkAvailable() {
 void DeepSeekWorker::requestAdvice(const QString &violationType) {
   m_violationType = violationType;
   m_isTimeout = false;
+  printf("[DeepSeek] 请求建议, 类型: %s\n", violationType.toUtf8().constData());
+  fflush(stdout);
 
   // 释放之前的请求
   if (m_currentReply) {
@@ -80,52 +83,41 @@ void DeepSeekWorker::requestAdvice(const QString &violationType) {
         if (m_isTimeout) return;
         m_timeoutTimer->stop();
 
-        QString advice;
-        if (m_violationType == "未戴安全帽") {
-          advice = "<h3>🤖 DeepSeek AI 实时分析建议</h3>"
-                   "<p><b>🚨 风险评估：</b> 检测到人员未戴安全帽。头部暴露，存在极高高空坠物或碰撞的致命风险。</p>"
-                   "<p><b>🛠️ 智能整改建议：</b></p>"
-                   "<ul>"
-                   "<li><b>立即叫停：</b> 现场管理应立即通过广播叫停作业并纠正。</li>"
-                   "<li><b>人防技防相结合：</b> 对多次违规者通报处罚，入口部署防护帽闸机联动。</li>"
-                   "</ul>";
-        } else if (m_violationType == "未穿背心") {
-          advice = "<h3>🤖 DeepSeek AI 实时分析建议</h3>"
-                   "<p><b>🚨 风险评估：</b> 检测到人员未穿反光背心。在车辆往来或暗光环境下极易产生视觉盲区。</p>"
-                   "<p><b>🛠️ 智能整改建议：</b></p>"
-                   "<ul>"
-                   "<li><b>装备检查：</b> 派发并强制穿戴符合规范的二级反光防护背心。</li>"
-                   "<li><b>红线教育：</b> 宣贯车辆挤压伤害警示，落实区域硬隔离。</li>"
-                   "</ul>";
-        } else if (m_violationType == "未戴护目镜") {
-          advice = "<h3>🤖 DeepSeek AI 实时分析建议</h3>"
-                   "<p><b>🚨 风险评估：</b> 检测到人员未戴护目镜。作业环境可能存在飞溅碎屑、强光或化学飞溅威胁眼部安全。</p>"
-                   "<p><b>🛠️ 智能整改建议：</b></p>"
-                   "<ul>"
-                   "<li><b>现场干预：</b> 立即暂停打磨、切削或焊接工序。</li>"
-                   "<li><b>配备供给：</b> 确保工位旁防冲/防尘护目镜充足完好。</li>"
-                   "</ul>";
-        } else if (m_violationType == "未戴手套") {
-          advice = "<h3>🤖 DeepSeek AI 实时分析建议</h3>"
-                   "<p><b>🚨 风险评估：</b> 检测到人员未戴防护手套。手部极易受到机械切削、刺伤或接触过敏伤害。</p>"
-                   "<p><b>🛠️ 智能整改建议：</b></p>"
-                   "<ul>"
-                   "<li><b>安全指导：</b> 指引人员选择防割或绝缘手套，并在关键工位挂牌示警。</li>"
-                   "</ul>";
-        } else if (m_violationType == "抽烟报警") {
-          advice = "<h3>🤖 DeepSeek AI 实时分析建议</h3>"
-                   "<p><b>🚨 风险评估：</b> 检测到违规抽烟。防爆及明火管制区内，哪怕极小的烟火均会诱发爆燃事故。</p>"
-                   "<p><b>🛠️ 智能整改建议：</b></p>"
-                   "<ul>"
-                   "<li><b>紧急行动：</b> 迅速派人熄灭烟源，排查残留隐患。</li>"
-                   "<li><b>严厉通报：</b> 取证后通报重罚，将人员拉入安全黑名单。</li>"
-                   "</ul>";
-        } else {
-          advice = QString("<h3>🤖 DeepSeek AI 实时分析建议</h3>"
-                           "<p><b>🚨 风险评估：</b> 现场检测到 [%1] 违规异常。</p>"
-                           "<p><b>🛠️ 智能整改建议：</b> 请立即核查岗位安全操作规程，停止违章行为。</p>").arg(m_violationType);
+        QStringList types = m_violationType.split("、");
+        QString riskHtml;
+        QString adviceHtml;
+
+        for (const QString &t : types) {
+          if (t == "未戴安全帽") {
+            riskHtml += "<li><b>安全帽缺失</b>：头部暴露于高空坠物及硬物碰撞风险中，危险级别极高。</li>";
+            adviceHtml += "<li>立即广播叫停违章作业，督促佩戴安全帽，对多次违规者通报处罚。</li>";
+          } else if (t == "未穿背心") {
+            riskHtml += "<li><b>反光背心缺失</b>：缺少高能见度指示，车辆盲区及暗光环境极易引发碰撞事故。</li>";
+            adviceHtml += "<li>强制穿戴二级反光背心，并在重点车行区域实施人车硬隔离。</li>";
+          } else if (t == "未戴护目镜") {
+            riskHtml += "<li><b>护目镜缺失</b>：打磨、切割飞溅碎屑与强光弧光极易灼伤或刺伤角膜。</li>";
+            adviceHtml += "<li>暂停相关高危作业，工位就近供给护目镜并强制佩戴。</li>";
+          } else if (t == "未戴手套") {
+            riskHtml += "<li><b>防护手套缺失</b>：手部直接接触旋转器械与过敏介质，存在绞伤、割伤及接触伤害。</li>";
+            adviceHtml += "<li>配置耐磨防割或绝缘专用手套，并在工作台贴挂安全警示牌。</li>";
+          } else if (t == "抽烟报警") {
+            riskHtml += "<li><b>违规抽烟</b>：明火在防爆及火情管制区内极易诱发局部爆燃。</li>";
+            adviceHtml += "<li>迅速派人熄灭烟头并排除隐患，对当事人通报红线重罚。</li>";
+          } else if (t == "底层火警探头" || t == "底层物理火警" || t == "底座火焰触发") {
+            riskHtml += "<li><b>物理火警触发</b>：起火点极易产生局部蔓延、毒气扩散及全厂爆燃险情。</li>";
+            adviceHtml += "<li>立即启动全厂消防广播，疏散人员，切断起火区非消防电源，拨打119。</li>";
+          } else {
+            riskHtml += QString("<li>检测到 [%1] 安全风险。</li>").arg(t);
+            adviceHtml += "<li>请相关安全管理人员立刻前往现场核查。</li>";
+          }
         }
-        
+
+        QString advice = QString("<h3>[AI] DeepSeek AI 实时分析建议</h3>"
+                                 "<p><b>[风险] 联合风险评估：</b></p>"
+                                 "<ul>%1</ul>"
+                                 "<p><b>[整改] 智能整改建议：</b></p>"
+                                 "<ul>%2</ul>").arg(riskHtml, adviceHtml);
+
         printf("[DeepSeek] 成功获取 AI 建议\n");
         fflush(stdout);
         emit analysisFinished(advice);
@@ -144,7 +136,7 @@ void DeepSeekWorker::requestAdvice(const QString &violationType) {
 
   // 构建 OpenAI 兼容的 payload
   QJsonObject rootObj;
-  rootObj["model"] = "deepseek-chat";
+  rootObj["model"] = m_modelName;
   
   QJsonArray messages;
   QJsonObject systemMsg;
@@ -173,9 +165,9 @@ void DeepSeekWorker::onReplyFinished() {
 
   if (m_currentReply->error() != QNetworkReply::NoError) {
     // 出现网络错误（如断网、域名解析失败、拒绝连接等）
-    printf("📡 [DeepSeek] 网络不可达，使用降级预设建议\n");
+    printf("[降级] [DeepSeek] 网络不可达，使用降级预设建议\n");
     fflush(stdout);
-    qWarning() << "📡 [DeepSeek] 网络请求失败，错误代码:" << m_currentReply->error();
+    qWarning() << "[降级] [DeepSeek] 网络请求失败，错误代码:" << m_currentReply->error();
     emit analysisFinished(getFallbackAdvice(m_violationType));
   } else {
     // 成功收到回复，解析 JSON
@@ -192,7 +184,7 @@ void DeepSeekWorker::onReplyFinished() {
         if (!content.isEmpty()) {
           // 为了 UI 美观，若 AI 返回的不是 HTML，包一层容器
           if (!content.contains("<h3>") && !content.contains("<p>")) {
-            content = QString("<h3>🤖 DeepSeek AI 实时分析建议</h3><p>%1</p>").arg(content);
+            content = QString("<h3>[AI] DeepSeek AI 实时分析建议</h3><p>%1</p>").arg(content);
           }
           printf("[DeepSeek] 成功获取 AI 建议\n");
           fflush(stdout);
@@ -204,7 +196,7 @@ void DeepSeekWorker::onReplyFinished() {
       }
     }
     // 解析失败降级
-    printf("📡 [DeepSeek] 网络不可达，使用降级预设建议\n");
+    printf("[降级] [DeepSeek] 网络不可达，使用降级预设建议\n");
     fflush(stdout);
     emit analysisFinished(getFallbackAdvice(m_violationType));
   }
@@ -223,49 +215,51 @@ void DeepSeekWorker::onTimeout() {
   }
 
   // 输出要求的标准日志，以备测试脚本抓取
-  printf("📡 [DeepSeek] 网络不可达，使用降级预设建议\n");
+  printf("[降级] [DeepSeek] 网络不可达，使用降级预设建议\n");
   fflush(stdout);
 
   emit analysisFinished(getFallbackAdvice(m_violationType));
 }
 
 QString DeepSeekWorker::getFallbackAdvice(const QString &violationType) {
-  QString content;
-  if (violationType == "未戴安全帽") {
-    content = "<p><b>🚨 风险评估：</b> 存在物体打击与头部碰撞风险，极易造成严重人身伤害。</p>"
-              "<p><b>🛠️ 整改建议：</b><br>"
-              "1. 立即通过广播或对讲机制止该人员的违章作业。<br>"
-              "2. 责令其立即按规定佩戴个人防护装备（PPE）。<br>"
-              "3. 将本次违章行为记录在案，并在每日安全会上进行通报批评。</p>";
-  } else if (violationType == "未穿背心") {
-    content = "<p><b>🚨 风险评估：</b> 现场光线或工程车辆交互下，缺少高能见度反光指示，极易引发视觉盲区碰撞风险。</p>"
-              "<p><b>🛠️ 整改建议：</b><br>"
-              "1. 立即叫停作业，责令当事人穿戴反光背心。<br>"
-              "2. 检查现场安全距离，确保人车分流。</p>";
-  } else if (violationType == "未戴护目镜") {
-    content = "<p><b>🚨 风险评估：</b> 弧光、飞溅金属屑可能对眼部角膜造成机械性划伤或灼伤。</p>"
-              "<p><b>🛠️ 整改建议：</b><br>"
-              "1. 立即停止打磨/焊接等高危工序。<br>"
-              "2. 佩戴专用护目镜后方可重新作业。</p>";
-  } else if (violationType == "未戴手套") {
-    content = "<p><b>🚨 风险评估：</b> 操作旋转切削机具或粗糙物料时，可能导致手部夹伤、刺伤或接触过敏。</p>"
-              "<p><b>🛠️ 整改建议：</b><br>"
-              "1. 指引人员选择适合该工位介质的耐磨/绝缘防护手套。<br>"
-              "2. 加强工前手部检查。</p>";
-  } else if (violationType == "抽烟报警") {
-    content = "<p><b>🚨 风险评估：</b> 作业现场可能存在易燃易爆物品，明火极易引发重大火灾或爆炸事故。</p>"
-              "<p><b>🛠️ 整改建议：</b><br>"
-              "1. 立即上前制止，要求彻底熄灭烟头。<br>"
-              "2. 检查周围是否有易燃物，确认无火灾隐患。<br>"
-              "3. 对当事人进行安全红线通报及处罚。</p>";
-  } else if (violationType == "底层物理火警" || violationType == "底座火焰触发" || violationType == "底层火警探头") {
-    content = "<p><b>🚨 风险评估：</b> 物理火警触发，危险级极高！火势可能蔓延。</p>"
-              "<p><b>🛠️ 应急指导：</b><br>"
-              "1. 立即启动全厂消防警报，疏散所有人员。<br>"
-              "2. 切断起火区域 of 非消防电源。<br>"
-              "3. 若火势无法控制，立即拨打 119。</p>";
-  } else {
-    content = "<p>系统正在监控中。请保持规范操作，防范潜在安全隐患。</p>";
+  QStringList types = violationType.split("、");
+  QString riskContent;
+  QString adviceContent;
+  int adviceIndex = 1;
+
+  for (const QString &type : types) {
+    if (type == "未戴安全帽") {
+      riskContent += "检测到人员未佩戴安全帽，头部暴露，存在高空坠物或碰撞的致命风险；";
+      adviceContent += QString("%1. 立即通过广播或对讲纠正，责令其佩戴安全帽；").arg(adviceIndex++);
+    } else if (type == "未穿背心") {
+      riskContent += "缺少高能见度反光指示，在工程车辆或暗光交互下存在严重的视觉盲区碰撞风险；";
+      adviceContent += QString("%1. 立即叫停作业，要求穿戴反光背心并做好现场人车分流；").arg(adviceIndex++);
+    } else if (type == "未戴护目镜") {
+      riskContent += "弧光、金属碎屑飞溅可能对眼部造成划伤或化学灼伤风险；";
+      adviceContent += QString("%1. 立即暂停打磨/焊接等高危工序，配备护目镜并重新作业；").arg(adviceIndex++);
+    } else if (type == "未戴手套") {
+      riskContent += "手部直接接触旋转器械与粗糙物料，可能发生刺伤、切削或夹伤等手部伤害；";
+      adviceContent += QString("%1. 指引人员配备防割/绝缘/防护手套，并在关键工位挂牌示警；").arg(adviceIndex++);
+    } else if (type == "抽烟报警") {
+      riskContent += "易燃易爆物管制区内违规抽烟，极易引发重大火灾或爆炸事故；";
+      adviceContent += QString("%1. 立即制止吸烟并掐灭烟头，排除易燃隐患，通报红线重罚；").arg(adviceIndex++);
+    } else if (type == "底层物理火警" || type == "底座火焰触发" || type == "底层火警探头") {
+      riskContent += "物理火警触发，极易产生起火点蔓延、有毒气体扩散及爆燃险情；";
+      adviceContent += QString("%1. 立即拉响全厂消防广播，疏散人员，切断起火区非消防电源，拨打119；").arg(adviceIndex++);
+    }
   }
-  return QString("<h3>📡 [本地降级预设] 安全生产指导</h3>") + content;
+
+  if (riskContent.isEmpty()) {
+    riskContent = "检测到 " + violationType + " 安全风险；";
+    adviceContent = "请立即核查岗位安全操作规程，纠正违章行为。";
+  } else {
+    // 移除多余的分号
+    if (riskContent.endsWith("；")) riskContent.chop(1);
+    if (adviceContent.endsWith("；")) adviceContent.chop(1);
+  }
+
+  QString content = QString("<p><b>[风险] 风险评估：</b> %1。</p>"
+                            "<p><b>[整改] 综合整改建议：</b><br>%2。</p>").arg(riskContent, adviceContent);
+
+  return QString("<h3>[降级] [本地降级预设] 安全生产指导</h3>") + content;
 }

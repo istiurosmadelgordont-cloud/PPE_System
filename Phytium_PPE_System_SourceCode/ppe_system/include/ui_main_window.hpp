@@ -40,6 +40,7 @@ signals:
   void sendFrame(const cv::Mat &frame);
   void sendAlarmLog(QString type, QString time, QString imgPath);
   void sendPhysicalAlarmStatus(bool triggered);
+  void sendAiMetrics(int latencyMs, int personCount);
 
 private:
   SignalBridge() = default;
@@ -91,6 +92,7 @@ private slots:
   void showDeepSeekSuggestion(const QString &text);
   void onDeepSeekAnalysisStarted();
   void onDeepSeekAnalysisFinished(const QString &advice);
+  void triggerAggregatedDeepSeek();
 
 private:
   // 辅助函数：创建统一样式的面板卡片
@@ -144,6 +146,7 @@ private:
   QLabel *rpmsgStatusLabel;
   QLabel *crcStatusLabel;
   QLabel *heartbeatStatusLabel;
+  QLabel *sysLoadLabel;
 
   // 控制按钮
   QPushButton *btnLiveStream;
@@ -154,4 +157,12 @@ private:
   unsigned long long prevTotalTicks;
   unsigned long long prevIdleTicks;
   DeepSeekWorker *dsWorker;
+  QTimer *m_dsAggregationTimer;
+  QStringList m_pendingViolations;
+
+  // 累加违规计数器
+  int m_cntHelmet = 0;
+  int m_cntVest = 0;
+  int m_cntGoggle = 0;
+  int m_cntSmoke = 0;
 };

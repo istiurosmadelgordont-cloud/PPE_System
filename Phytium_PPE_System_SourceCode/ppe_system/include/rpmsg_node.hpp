@@ -58,6 +58,11 @@ public:
    */
   void cleanup();
 
+  /**
+   * @brief  获取当前通道连接状态
+   */
+  bool isConnected() const { return is_connected; }
+
   /// @brief 全局原子状态标识，指示当前是否处于物理火警触发状态
   std::atomic<bool> is_physical_alarm{false};
 
