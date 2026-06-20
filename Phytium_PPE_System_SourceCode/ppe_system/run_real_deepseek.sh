@@ -4,7 +4,7 @@
 # ==========================================
 
 # 1. 填入您的真实 DeepSeek API Key (将下面的 PLACEHOLDER_KEY 替换为您的真实 Key)
-export DEEPSEEK_API_KEY="YOUR_DEEPSEEK_API_KEY"
+export DEEPSEEK_API_KEY="sk-PLACEHOLDER_KEY"
 
 # 2. 填入 API 网关地址与模型名称 (默认直连官方，可根据文档切换为 deepseek-v4-flash 或 deepseek-v4-pro)
 export DEEPSEEK_API_URL="https://api.deepseek.com/chat/completions"

@@ -141,7 +141,7 @@ void DeepSeekWorker::requestAdvice(const QString &violationType) {
   QJsonArray messages;
   QJsonObject systemMsg;
   systemMsg["role"] = "system";
-  systemMsg["content"] = "你是一个智能安全生产顾问，专门针对现场的 PPE 穿戴违规或物理险情给出非常精炼的风险评估与整改建议。要求排版为 HTML 段落，重点字词加粗，语言精炼，不超过120字。";
+  systemMsg["content"] = "你是一个资深智能安全生产顾问，针对工业现场的 PPE 穿戴违规或物理险情，给出专业、深入的风险危害评估与切实可行的现场防范和整改建议。请从现场控制、人身安全、合规要求等多维度展开，提供丰富的指导性细节。要求排版为美观的 HTML 格式（包含 <h3> 标题、段落 <p>，重点词汇使用 <b> 加粗），字数控制在 250 字以内。";
   messages.append(systemMsg);
 
   QJsonObject userMsg;
