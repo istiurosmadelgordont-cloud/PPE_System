@@ -22,6 +22,61 @@ static FI2c i2c_instance;
 static int aht20_init_ok = 0;
 static int aht20_present = 1; // 默认认为存在
 
+/* 声明 SDK 中定义但未在 fi2c.h 声明的 Probe 函数 */
+extern FError FI2cMasterProbeDevice(FI2c *instance_p);
+
+/* 使用 FI2cMasterXfer 实现 ReadPoll 兼容包装 */
+static FError FI2cMasterReadPoll(FI2c *instance_p, u32 reg_addr, u32 reg_len, u8 *buf, u32 len)
+{
+    FI2cMsg msgs[2];
+    u32 num_msgs = 0;
+    u8 reg_buf[4];
+    
+    if (reg_len > 0) {
+        for (u32 i = 0; i < reg_len; i++) {
+            reg_buf[i] = (reg_addr >> (8 * (reg_len - 1 - i))) & 0xFF;
+        }
+        msgs[num_msgs].device_addr = instance_p->config.slave_addr;
+        msgs[num_msgs].flags = FI2C_M_WE;
+        msgs[num_msgs].len = reg_len;
+        msgs[num_msgs].buf = reg_buf;
+        num_msgs++;
+    }
+    
+    msgs[num_msgs].device_addr = instance_p->config.slave_addr;
+    msgs[num_msgs].flags = FI2C_M_RD;
+    msgs[num_msgs].len = len;
+    msgs[num_msgs].buf = buf;
+    num_msgs++;
+    
+    return FI2cMasterXfer(instance_p, msgs, num_msgs);
+}
+
+/* 使用 FI2cMasterXfer 实现 WritePoll 兼容包装 */
+static FError FI2cMasterWritePoll(FI2c *instance_p, u32 reg_addr, u32 reg_len, const u8 *buf, u32 len)
+{
+    u8 temp_buf[32];
+    if (reg_len + len > sizeof(temp_buf)) {
+        return FI2C_ERR_NOT_READY;
+    }
+    
+    for (u32 i = 0; i < reg_len; i++) {
+        temp_buf[i] = (reg_addr >> (8 * (reg_len - 1 - i))) & 0xFF;
+    }
+    
+    if (len > 0) {
+        memcpy(temp_buf + reg_len, buf, len);
+    }
+    
+    FI2cMsg msg;
+    msg.device_addr = instance_p->config.slave_addr;
+    msg.flags = FI2C_M_WE;
+    msg.len = reg_len + len;
+    msg.buf = temp_buf;
+    
+    return FI2cMasterXfer(instance_p, &msg, 1);
+}
+
 FError AHT20_Init(void)
 {
     if (aht20_init_ok) return FT_SUCCESS;
@@ -45,7 +100,7 @@ FError AHT20_Init(void)
     memset(&input_cfg, 0, sizeof(input_cfg));
     input_cfg.base_addr = FMioFuncGetAddress(&mio_instance, FMIO_FUNC_SET_I2C);
     input_cfg.irq_num = FMioFuncGetIrqNum(&mio_instance, FMIO_FUNC_SET_I2C);
-    input_cfg.irq_prority = 0;            /* 注意：旧版SDK拼写为 irq_prority */
+    input_cfg.irq_priority = 0;            /* 修复拼写：irq_priority */
     input_cfg.ref_clk_hz = FMIO_CLK_FREQ_HZ;  /* 50MHz */
     input_cfg.work_mode = FI2C_MASTER;
     input_cfg.slave_addr = AHT20_I2C_ADDR;

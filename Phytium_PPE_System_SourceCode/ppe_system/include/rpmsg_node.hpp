@@ -79,12 +79,19 @@ private:
   std::mutex mtx;               ///< 线程安全互斥锁，保护写操作
   std::thread rx_thread;        ///< 异步数据接收线程
   std::atomic<bool> rx_running; ///< 接收线程运行标识
+  std::thread heartbeat_thread;   ///< 定时心跳发送线程
+  std::atomic<bool> heartbeat_running; ///< 心跳线程运行状态
 
   /**
    * @brief  异步接收任务流
    * @details 内部实现非对称滞回防抖状态机，过滤传感器毛刺与电磁干扰。
    */
   void rx_task();
+
+  /**
+   * @brief  心跳任务，定期发送心跳帧以刷新OpenAMP共享内存队列
+   */
+  void heartbeat_task();
 };
 
 #endif // RPMSG_NODE_HPP

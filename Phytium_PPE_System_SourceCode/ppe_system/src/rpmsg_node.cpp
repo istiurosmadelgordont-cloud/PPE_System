@@ -22,6 +22,9 @@
 #define MAX_DATA_LENGTH 256             ///< 最大数据包长度
 #define DEVICE_CORE_BUZZER_CTRL 0x0005U ///< 蜂鸣器控制命令字
 #define DEVICE_CORE_FIRE_REPORT 0x0006U ///< 火焰探头报警命令字
+#define DEVICE_CORE_GAS_REPORT 0x0007U  ///< 气体报警命令字
+#define DEVICE_CORE_ENV_REPORT 0x0008U  ///< 温湿度数据命令字
+#define DEVICE_CORE_CHECK 0x0003U       ///< 心跳及主动刷新命令字
 
 #pragma pack(push, 1)
 typedef struct {
@@ -32,7 +35,7 @@ typedef struct {
 #pragma pack(pop)
 
 RPMsgController::RPMsgController()
-    : rpmsg_fd(-1), is_connected(false), is_buzzer_on(false) {}
+    : rpmsg_fd(-1), is_connected(false), is_buzzer_on(false), heartbeat_running(false) {}
 
 RPMsgController::~RPMsgController() { cleanup(); }
 
@@ -62,6 +65,10 @@ bool RPMsgController::init() {
       // 启动底层监听线程
       rx_running = true;
       rx_thread = std::thread(&RPMsgController::rx_task, this);
+
+      // 启动心跳及主动刷新线程
+      heartbeat_running = true;
+      heartbeat_thread = std::thread(&RPMsgController::heartbeat_task, this);
     } else {
       printf("⚠️ [RPMsg] 打开端点 /dev/rpmsg0 失败！\n");
     }
@@ -94,6 +101,11 @@ void RPMsgController::set_buzzer(bool on) {
 }
 
 void RPMsgController::cleanup() {
+  heartbeat_running = false;
+  if (heartbeat_thread.joinable()) {
+    heartbeat_thread.join();
+  }
+
   rx_running = false;
   if (rx_thread.joinable()) {
     rx_thread.join();
@@ -149,44 +161,65 @@ void RPMsgController::rx_task() {
     if (ret > 0 && (pfd.revents & POLLIN)) {
       int n = read(rpmsg_fd, &pkt, sizeof(data_packet));
 
-      if (n > 0 && pkt.command == DEVICE_CORE_FIRE_REPORT &&
-          pkt.data[0] == '1') {
+      if (n > 0) {
+        printf("[RPMsg RX] 收到数据包: 命令=0x%x, 长度=%d\n", pkt.command, pkt.length);
+        fflush(stdout);
+        if (pkt.command == DEVICE_CORE_FIRE_REPORT && pkt.data[0] == '1') {
+          auto now = std::chrono::steady_clock::now();
 
-        auto now = std::chrono::steady_clock::now();
+          // 如果已经在报警中，只需要续命（刷新最后一次火警时间）
+          if (is_physical_alarm) {
+            last_fire_time = now;
+            continue;
+          }
 
-        // 如果已经在报警中，只需要续命（刷新最后一次火警时间）
-        if (is_physical_alarm) {
+          // --- 尚未报警：执行计数确认逻辑 ---
+          // 如果距离第一次计数已经超过确认窗口，重新开始计数
+          auto elapsed_since_first =
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                  now - first_fire_time)
+                  .count();
+
+          if (fire_count == 0 || elapsed_since_first > CONFIRM_WINDOW_MS) {
+            // 重置计数器，从头开始
+            fire_count = 1;
+            first_fire_time = now;
+          } else {
+            fire_count++;
+          }
+
           last_fire_time = now;
-          continue;
+
+          // 达到阈值 → 确认火警！
+          if (fire_count >= CONFIRM_COUNT) {
+            is_physical_alarm = true;
+            fire_count = 0; // 重置计数器，为下次做好准备
+            printf("🔥 [火警确认] 连续 %d 次信号确认，拉响警报！\n",
+                   CONFIRM_COUNT);
+            emit SignalBridge::getInstance() -> sendPhysicalAlarmStatus(true);
+          } else {
+            printf("🔸 [火警预警] 收到第 %d/%d 次信号，等待确认...\n", fire_count,
+                   CONFIRM_COUNT);
+          }
         }
-
-        // --- 尚未报警：执行计数确认逻辑 ---
-        // 如果距离第一次计数已经超过确认窗口，重新开始计数
-        auto elapsed_since_first =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - first_fire_time)
-                .count();
-
-        if (fire_count == 0 || elapsed_since_first > CONFIRM_WINDOW_MS) {
-          // 重置计数器，从头开始
-          fire_count = 1;
-          first_fire_time = now;
-        } else {
-          fire_count++;
+        else if (pkt.command == DEVICE_CORE_GAS_REPORT) {
+          bool gas_alarm = (pkt.data[0] == '1');
+          printf("☁️ [RPMsg] 收到可燃气体上报: %s\n", gas_alarm ? "警报触发" : "安全");
+          fflush(stdout);
+          emit SignalBridge::getInstance()->sendGasAlarmStatus(gas_alarm);
         }
-
-        last_fire_time = now;
-
-        // 达到阈值 → 确认火警！
-        if (fire_count >= CONFIRM_COUNT) {
-          is_physical_alarm = true;
-          fire_count = 0; // 重置计数器，为下次做好准备
-          printf("🔥 [火警确认] 连续 %d 次信号确认，拉响警报！\n",
-                 CONFIRM_COUNT);
-          emit SignalBridge::getInstance() -> sendPhysicalAlarmStatus(true);
-        } else {
-          printf("🔸 [火警预警] 收到第 %d/%d 次信号，等待确认...\n", fire_count,
-                 CONFIRM_COUNT);
+        else if (pkt.command == DEVICE_CORE_ENV_REPORT) {
+          float temp = 0.0f, humid = 0.0f;
+          if (pkt.length < MAX_DATA_LENGTH) {
+            pkt.data[pkt.length] = '\0';
+          } else {
+            pkt.data[MAX_DATA_LENGTH - 1] = '\0';
+          }
+          if (sscanf(pkt.data, "T:%f,H:%f", &temp, &humid) == 2) {
+            printf("🌡️ [RPMsg] 收到温湿度上报: T=%.1f C, H=%.1f %%\n", temp, humid);
+            fflush(stdout);
+            emit SignalBridge::getInstance()->sendEnvMetrics(temp, humid);
+          }
         }
       }
     }
@@ -203,6 +236,26 @@ void RPMsgController::rx_task() {
         printf("✅ [火警解除] 已沉默 %dms，恢复正常状态\n", RELEASE_TIMEOUT_MS);
         emit SignalBridge::getInstance() -> sendPhysicalAlarmStatus(false);
       }
+    }
+  }
+}
+
+void RPMsgController::heartbeat_task() {
+  data_packet pkt;
+  memset(&pkt, 0, sizeof(data_packet));
+  pkt.command = DEVICE_CORE_CHECK;
+  pkt.length = 0;
+
+  while (heartbeat_running) {
+    // 每 500ms 发送一次空心跳包
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    
+    std::lock_guard<std::mutex> lock(mtx);
+    if (is_connected && rpmsg_fd > 0) {
+      // 写入 6 字节数据头（4字节命令 + 2字节长度）
+      // 写入操作会强制 Linux 内核驱动遍历并处理 TX 和 RX 描述符，从而拉取滞留的温湿度数据包
+      int n = write(rpmsg_fd, &pkt, 6);
+      (void)n;
     }
   }
 }

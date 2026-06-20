@@ -143,7 +143,7 @@
 #define CONFIG_ENABLE_FGPIO
 /* CONFIG_USE_ETH is not set */
 /* CONFIG_USE_CAN is not set */
-/* CONFIG_USE_I2C is not set */
+#define CONFIG_USE_I2C
 #define CONFIG_USE_TIMER
 
 /* Hardware Timer Configuration */

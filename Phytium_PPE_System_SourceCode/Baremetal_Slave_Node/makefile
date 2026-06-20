@@ -1,5 +1,5 @@
 PROJECT_DIR = $(CURDIR)
-SDK_DIR ?= $(CURDIR)/../../../..
+SDK_DIR ?= $(PROJECT_DIR)/../../../..
 
 USER_CSRC := main.c
 USER_CSRC += $(wildcard  src/*.c)
@@ -7,6 +7,8 @@ USER_CSRC += $(wildcard  src/*.c)
 USER_INCLUDE += $(PROJECT_DIR) \
 				$(PROJECT_DIR)/inc \
 				$(PROJECT_DIR)/common
+
+LDFLAGS += -static
 
 include $(SDK_DIR)/tools/build/makeall.mk
 

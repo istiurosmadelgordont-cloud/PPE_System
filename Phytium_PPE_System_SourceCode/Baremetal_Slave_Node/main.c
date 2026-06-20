@@ -47,3 +47,8 @@ int main(void)
     /*run the example*/
     return slave00_rpmsg_echo_process();
 }
+
+unsigned long __getauxval(unsigned long type)
+{
+    return 0;
+}

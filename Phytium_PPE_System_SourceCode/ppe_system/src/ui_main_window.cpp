@@ -585,6 +585,36 @@ MainWindow::MainWindow(QWidget *parent)
       },
       Qt::QueuedConnection);
 
+  connect(SignalBridge::getInstance(), &SignalBridge::sendGasAlarmStatus, this,
+          [this](bool alarmed) {
+            if (sensorGas) {
+              if (alarmed) {
+                sensorGas->setText("● 警报");
+                sensorGas->setStyleSheet("color: #EF4444; font-weight: bold; font-size: 14px; border: none;");
+              } else {
+                sensorGas->setText("● 正常");
+                sensorGas->setStyleSheet("color: #10B981; font-weight: bold; font-size: 14px; border: none;");
+              }
+            }
+          },
+          Qt::QueuedConnection);
+
+  connect(SignalBridge::getInstance(), &SignalBridge::sendEnvMetrics, this,
+          [this](double temp, double humid) {
+            if (sensorTemp) {
+              sensorTemp->setText(QString("%1 °C").arg(temp, 0, 'f', 1));
+              if (temp >= 35.0) {
+                sensorTemp->setStyleSheet("color: #EF4444; font-weight: bold; font-size: 15px; border: none;");
+              } else {
+                sensorTemp->setStyleSheet("color: #F59E0B; font-weight: bold; font-size: 15px; border: none;");
+              }
+            }
+            if (sensorHumid) {
+              sensorHumid->setText(QString("%1%").arg(humid, 0, 'f', 1));
+            }
+          },
+          Qt::QueuedConnection);
+
   systemTimer = new QTimer(this);
   connect(systemTimer, &QTimer::timeout, this, &MainWindow::updateSystemStats);
   systemTimer->start(2000);
@@ -865,23 +895,16 @@ void MainWindow::updateSystemStats() {
     if (!line.isNull()) {
       double temp = line.toDouble() / 1000.0;
       headerTempLabel->setText(QString("温度 %1 °C").arg(temp, 0, 'f', 1));
-      sensorTemp->setText(QString("%1 °C").arg(temp, 0, 'f', 1));
 
       QString badgeStyle = "background-color: #25201F; border: 1px solid "
                            "#4A3825; border-radius: 14px; padding: 6px 14px; "
                            "font-size: 12px; font-weight: bold;";
       if (temp >= 75.0) {
         headerTempLabel->setStyleSheet(badgeStyle + "color: #EF4444;");
-        sensorTemp->setStyleSheet("color: #EF4444; font-weight: bold; "
-                                  "font-size: 15px; border: none;");
       } else if (temp >= 65.0) {
         headerTempLabel->setStyleSheet(badgeStyle + "color: #F59E0B;");
-        sensorTemp->setStyleSheet("color: #F59E0B; font-weight: bold; "
-                                  "font-size: 15px; border: none;");
       } else {
         headerTempLabel->setStyleSheet(badgeStyle + "color: #10B981;");
-        sensorTemp->setStyleSheet("color: #10B981; font-weight: bold; "
-                                  "font-size: 15px; border: none;");
       }
     }
     tempFile.close();
@@ -984,13 +1007,6 @@ void MainWindow::updateSystemStats() {
   // 5. 模拟环境传感器的小幅波动
   static int counter = 0;
   counter++;
-  if (sensorGas) {
-    sensorGas->setText("● 正常");
-  }
-  if (sensorHumid) {
-    int val = 62 + (counter % 7);
-    sensorHumid->setText(QString("%1%").arg(val));
-  }
   if (sensorNoise) {
     int val = 58 + ((counter + 3) % 7);
     sensorNoise->setText(QString("%1dB").arg(val));

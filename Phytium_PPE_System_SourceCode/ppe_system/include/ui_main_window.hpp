@@ -41,6 +41,8 @@ signals:
   void sendAlarmLog(QString type, QString time, QString imgPath);
   void sendPhysicalAlarmStatus(bool triggered);
   void sendAiMetrics(int latencyMs, int personCount);
+  void sendGasAlarmStatus(bool alarmed);
+  void sendEnvMetrics(double temp, double humid);
 
 private:
   SignalBridge() = default;
