@@ -28,6 +28,9 @@
 #include "libmetal_configs.h"
 #include "slaver_00_example.h"
 #include "buzzer.h"
+#include "aht20.h"
+#include "gas_sensor.h"
+#include "fgeneric_timer.h"
 
 /************************** 外部驱动声明与全局状态机 *****************************/
 extern void led20Set(int flag);
@@ -49,6 +52,8 @@ static struct rpmsg_endpoint *g_ept = NULL; /* 全局端点指针，用于主动
 #define DEVICE_CORE_LED_CTRL 0x0004U 
 #define DEVICE_CORE_BUZZER_CTRL 0x0005U 
 #define DEVICE_CORE_FIRE_REPORT 0x0006U 
+#define DEVICE_CORE_GAS_REPORT  0x0007U
+#define DEVICE_CORE_ENV_REPORT  0x0008U
 #define DEVICE_CORE_START    0x0001U 
 #define DEVICE_CORE_SHUTDOWN 0x0002U 
 #define DEVICE_CORE_CHECK    0x0003U 
@@ -222,9 +227,44 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
     /* 开机基准状态检测 */
     Execute_Alarm_Arbitration();
 
+    u64 tick_hz = GenericTimerFrequecy();
+    u64 period = tick_hz / 2; // 500ms
+    u64 last_tick = GenericTimerRead(GENERIC_TIMER_ID0);
+
     while (1)
     {
         platform_poll(priv);
+        
+        u64 current_tick = GenericTimerRead(GENERIC_TIMER_ID0);
+        if (current_tick - last_tick >= period)
+        {
+            last_tick = current_tick;
+            
+            // 1. 读取并上报 AHT20 温湿度
+            float temp = 0.0f, humid = 0.0f;
+            if (AHT20_Read_Sensor(&temp, &humid) == FT_SUCCESS)
+            {
+                ProtocolData env_pkt;
+                env_pkt.command = DEVICE_CORE_ENV_REPORT;
+                int len = snprintf(env_pkt.data, MAX_DATA_LENGTH, "T:%.1f,H:%.1f", temp, humid);
+                env_pkt.length = len;
+                if (g_ept)
+                {
+                    rpmsg_send(g_ept, &env_pkt, 6 + len);
+                }
+            }
+            
+            // 2. 读取并上报 MQ-2 可燃气体状态
+            int gas_level = Gas_Sensor_Read_Level();
+            ProtocolData gas_pkt;
+            gas_pkt.command = DEVICE_CORE_GAS_REPORT;
+            gas_pkt.data[0] = (gas_level == 0) ? '1' : '0'; // 0表示拉低触发警报，1表示安全
+            gas_pkt.length = 1;
+            if (g_ept)
+            {
+                rpmsg_send(g_ept, &gas_pkt, 6 + 1);
+            }
+        }
         
         if (shutdown_req || rproc_get_stop_flag())
         {
@@ -242,6 +282,8 @@ int slave_init(void)
 {
     init_system(); 
     Buzzer_Init();
+    AHT20_Init();
+    Gas_Sensor_Init();
     
     if (!platform_create_proc(&remoteproc_slave_00, &slave_00_priv, &kick_driver_00))
         return -1; 
