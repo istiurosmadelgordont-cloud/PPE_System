@@ -16,8 +16,15 @@
 #include "ui_main_window.hpp"
 #include <QApplication>
 #include <thread>
+#include <signal.h>
 
-// 全局变量已统一在 global_context.hpp 中声明和定义
+// 信号处理函数，确保捕捉到 SIGINT (Ctrl+C) 和 SIGTERM 时安全关闭从核看门狗
+void signal_handler(int signum) {
+  printf("\n⚡ [信号捕捉] 收到退出信号 (%d)，正在执行异构安全清理...\n", signum);
+  fflush(stdout);
+  RPMsgController::getInstance().cleanup();
+  exit(signum);
+}
 
 // 声明后台线程函数
 extern void camera_thread_func();
@@ -25,6 +32,10 @@ extern void inference_thread_func();
 extern void io_thread_func();
 
 int main(int argc, char *argv[]) {
+  // 注册信号处理器
+  signal(SIGINT, signal_handler);
+  signal(SIGTERM, signal_handler);
+
   // 1. 初始化图形引擎 (GUI Engine)
   QApplication app(argc, argv);
 
@@ -52,5 +63,11 @@ int main(int argc, char *argv[]) {
   window.showFullScreen();
 
   // 5. Core 0 在此处陷入死循环，专注响应 UI 事件驱动与图表重绘
-  return app.exec();
+  int ret = app.exec();
+
+  printf("⚡ [正常退出] 正在执行异构安全清理...\n");
+  fflush(stdout);
+  RPMsgController::getInstance().cleanup();
+
+  return ret;
 }

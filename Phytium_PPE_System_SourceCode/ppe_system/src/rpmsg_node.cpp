@@ -18,6 +18,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <errno.h>
 
 #define MAX_DATA_LENGTH 256             ///< 最大数据包长度
 #define DEVICE_CORE_BUZZER_CTRL 0x0005U ///< 蜂鸣器控制命令字
@@ -25,6 +26,7 @@
 #define DEVICE_CORE_GAS_REPORT 0x0007U  ///< 气体报警命令字
 #define DEVICE_CORE_ENV_REPORT 0x0008U  ///< 温湿度数据命令字
 #define DEVICE_CORE_CHECK 0x0003U       ///< 心跳及主动刷新命令字
+#define DEVICE_CORE_SHUTDOWN 0x0002U    ///< 从核安全停止并关闭看门狗命令字
 
 #pragma pack(push, 1)
 typedef struct {
@@ -57,7 +59,14 @@ bool RPMsgController::init() {
   eptinfo.dst = 0;
 
   if (ioctl(ctrl_fd, RPMSG_CREATE_EPT_IOCTL, &eptinfo) == 0) {
-    rpmsg_fd = open("/dev/rpmsg0", O_RDWR | O_NONBLOCK);
+    // 带有重试和微延迟的打开逻辑，防止 udev 权限异步修改的竞争风险
+    for (int retry = 0; retry < 10; ++retry) {
+      rpmsg_fd = open("/dev/rpmsg0", O_RDWR | O_NONBLOCK);
+      if (rpmsg_fd > 0) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
     if (rpmsg_fd > 0) {
       is_connected = true;
       printf("🔌 [RPMsg] 成功打通从核通信节点 /dev/rpmsg0！\n");
@@ -70,10 +79,10 @@ bool RPMsgController::init() {
       heartbeat_running = true;
       heartbeat_thread = std::thread(&RPMsgController::heartbeat_task, this);
     } else {
-      printf("⚠️ [RPMsg] 打开端点 /dev/rpmsg0 失败！\n");
+      printf("⚠️ [RPMsg] 打开端点 /dev/rpmsg0 失败！(errno=%d, %s)\n", errno, strerror(errno));
     }
   } else {
-    printf("⚠️ [RPMsg] 创建 OpenAMP 端点失败！\n");
+    printf("⚠️ [RPMsg] 创建 OpenAMP 端点失败！(errno=%d, %s)\n", errno, strerror(errno));
   }
 
   close(ctrl_fd);
@@ -113,12 +122,22 @@ void RPMsgController::cleanup() {
 
   std::lock_guard<std::mutex> lock(mtx);
   if (is_connected && rpmsg_fd > 0) {
+    // 1. 关闭从核报警蜂鸣器
     data_packet pkt;
     memset(&pkt, 0, sizeof(data_packet));
     pkt.command = DEVICE_CORE_BUZZER_CTRL;
     pkt.length = 1;
     pkt.data[0] = '0';
     write(rpmsg_fd, &pkt, sizeof(data_packet));
+
+    // 2. 发送从核安全关闭命令，停止从核看门狗以防意外整机重启
+    printf("🔌 [RPMsg] 正在向从核发送安全关闭命令...\n");
+    data_packet shut_pkt;
+    memset(&shut_pkt, 0, sizeof(data_packet));
+    shut_pkt.command = DEVICE_CORE_SHUTDOWN;
+    shut_pkt.length = 0;
+    write(rpmsg_fd, &shut_pkt, sizeof(data_packet));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 微小等待确保发送
 
     close(rpmsg_fd);
     is_connected = false;
@@ -147,6 +166,15 @@ void RPMsgController::rx_task() {
   int fire_count = 0;                                      // 累计收到的火警计数
   auto first_fire_time = std::chrono::steady_clock::now(); // 第一次火警的时间
   auto last_fire_time = std::chrono::steady_clock::now();  // 最近一次火警的时间
+
+  // --- 可燃气体防抖核心参数 ---
+  constexpr int GAS_CONFIRM_COUNT = 3; // 连续 3 次确认
+  constexpr int GAS_RELEASE_TIMEOUT_MS = 3000; // 沉默 3 秒解除
+  constexpr int GAS_CONFIRM_WINDOW_MS = 2000; // 2 秒确认窗口
+  int gas_count = 0;
+  auto first_gas_time = std::chrono::steady_clock::now();
+  auto last_gas_time = std::chrono::steady_clock::now();
+  bool is_gas_alarm = false;
 
   while (rx_running) {
     if (rpmsg_fd < 0) {
@@ -203,10 +231,35 @@ void RPMsgController::rx_task() {
           }
         }
         else if (pkt.command == DEVICE_CORE_GAS_REPORT) {
-          bool gas_alarm = (pkt.data[0] == '1');
-          printf("☁️ [RPMsg] 收到可燃气体上报: %s\n", gas_alarm ? "警报触发" : "安全");
-          fflush(stdout);
-          emit SignalBridge::getInstance()->sendGasAlarmStatus(gas_alarm);
+          bool gas_alarm_raw = (pkt.data[0] == '1');
+          auto now = std::chrono::steady_clock::now();
+          if (gas_alarm_raw) {
+            if (is_gas_alarm) {
+              last_gas_time = now;
+            } else {
+              auto elapsed_since_first =
+                  std::chrono::duration_cast<std::chrono::milliseconds>(
+                      now - first_gas_time)
+                      .count();
+              if (gas_count == 0 || elapsed_since_first > GAS_CONFIRM_WINDOW_MS) {
+                gas_count = 1;
+                first_gas_time = now;
+              } else {
+                gas_count++;
+              }
+              last_gas_time = now;
+              if (gas_count >= GAS_CONFIRM_COUNT) {
+                is_gas_alarm = true;
+                gas_count = 0;
+                printf("☁️ [气体警报确认] 连续 %d 次信号确认，拉响警报！\n", GAS_CONFIRM_COUNT);
+                fflush(stdout);
+                emit SignalBridge::getInstance()->sendGasAlarmStatus(true);
+              } else {
+                printf("☁️ [气体警报预警] 收到第 %d/%d 次信号，等待确认...\n", gas_count, GAS_CONFIRM_COUNT);
+                fflush(stdout);
+              }
+            }
+          }
         }
         else if (pkt.command == DEVICE_CORE_ENV_REPORT) {
           float temp = 0.0f, humid = 0.0f;
@@ -235,6 +288,20 @@ void RPMsgController::rx_task() {
         is_physical_alarm = false;
         printf("✅ [火警解除] 已沉默 %dms，恢复正常状态\n", RELEASE_TIMEOUT_MS);
         emit SignalBridge::getInstance() -> sendPhysicalAlarmStatus(false);
+      }
+    }
+
+    // --- 气体解除逻辑：必须沉默足够长时间才能解除 ---
+    if (is_gas_alarm) {
+      auto now = std::chrono::steady_clock::now();
+      auto silence_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            now - last_gas_time)
+                            .count();
+      if (silence_ms >= GAS_RELEASE_TIMEOUT_MS) {
+        is_gas_alarm = false;
+        printf("✅ [气体警报解除] 已沉默 %dms，恢复正常状态\n", GAS_RELEASE_TIMEOUT_MS);
+        fflush(stdout);
+        emit SignalBridge::getInstance()->sendGasAlarmStatus(false);
       }
     }
   }

@@ -14,11 +14,19 @@ export DEEPSEEK_MODEL="deepseek-v4-flash"
 export DISPLAY=:0
 xhost + 2>/dev/null
 
-# 4. 授予跨核硬件通信节点读写权限
+# 4. 确保加载从核固件并启动从核 (Core 1)
+echo "⚡ 正在加载从核固件并启动从核 (Core 1)..."
+echo "user" | sudo -S modprobe rpmsg_char 2>/dev/null
+echo "user" | sudo -S sh -c 'echo stop > /sys/class/remoteproc/remoteproc0/state' 2>/dev/null
+echo "user" | sudo -S sh -c 'echo openamp_core0.elf > /sys/class/remoteproc/remoteproc0/firmware' 2>/dev/null
+echo "user" | sudo -S sh -c 'echo start > /sys/class/remoteproc/remoteproc0/state' 2>/dev/null
+sleep 1
+
+# 5. 授予跨核硬件通信节点读写权限
 sudo chmod 666 /dev/rpmsg_ctrl0 2>/dev/null
 sudo chmod 666 /dev/rpmsg0 2>/dev/null
 
-# 5. 以最高权限启动 PPE 监控系统并保留环境变量
+# 6. 以最高权限启动 PPE 监控系统并保留环境变量
 echo "⚡ 正在启动 PPE 智能监控系统 (真实 DeepSeek API 模式)..."
 cd "$(dirname "$0")/build"
 echo "user" | sudo -S -E ./ppe_system

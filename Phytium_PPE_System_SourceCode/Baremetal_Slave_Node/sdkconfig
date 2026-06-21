@@ -173,7 +173,8 @@ CONFIG_ENABLE_TIMER_TACHO=y
 # CONFIG_USE_MIO is not set
 # CONFIG_USE_SDMMC is not set
 # CONFIG_USE_PCIE is not set
-# CONFIG_USE_WDT is not set
+CONFIG_USE_WDT=y
+CONFIG_USE_FWDT=y
 # CONFIG_USE_DMA is not set
 # CONFIG_USE_NAND is not set
 # CONFIG_USE_RTC is not set

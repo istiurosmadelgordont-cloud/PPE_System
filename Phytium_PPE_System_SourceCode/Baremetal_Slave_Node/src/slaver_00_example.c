@@ -31,6 +31,9 @@
 #include "aht20.h"
 #include "gas_sensor.h"
 #include "fgeneric_timer.h"
+#include "fwdt.h"
+#include "fparameters.h"
+#include "fsleep.h"
 
 /************************** 外部驱动声明与全局状态机 *****************************/
 extern void led20Set(int flag);
@@ -41,6 +44,12 @@ extern int Fire_Sensor_Read_Level(void);
 
 volatile bool flag_ai_alarm_req = false; 
 static struct rpmsg_endpoint *g_ept = NULL; /* 全局端点指针，用于主动向上级发信 */
+
+static FWdtCtrl g_wdt_ctrl;
+static volatile u32 g_heartbeat_miss_count = 0;
+static volatile bool g_fail_safe_active = false;
+static volatile bool g_has_received_first_heartbeat = false;
+static volatile bool g_wdt_started = false;
 
 /************************** 宏定义区 (必须在函数前) *****************************/
 #define SLAVE_DEBUG_TAG "    SLAVE_00"
@@ -162,6 +171,17 @@ static int rpmsg_endpoint_cb(struct rpmsg_endpoint *ept, void *data, size_t len,
     int ret;
     (void)priv;
     ept->dest_addr = src;
+    
+    // 只要收到主核任何消息，就认为主核已建立握手
+    g_has_received_first_heartbeat = true;
+    if (!g_wdt_started)
+    {
+        if (g_wdt_ctrl.is_ready)
+        {
+            FWdtStart(&g_wdt_ctrl);
+            g_wdt_started = true;
+        }
+    }
 
     ret = parse_protocol_data((char *)data, len, &protocol_data);
     if (ret != 0) return RPMSG_SUCCESS; 
@@ -190,6 +210,10 @@ static int rpmsg_endpoint_cb(struct rpmsg_endpoint *ept, void *data, size_t len,
             break;
             
         case DEVICE_CORE_CHECK:
+            g_heartbeat_miss_count = 0;
+            if (!g_fail_safe_active && g_wdt_ctrl.is_ready) {
+                FWdtRefresh(&g_wdt_ctrl);
+            }
             ret = rpmsg_send(ept, &protocol_data, len);
             if (ret < 0) return ret;
             break;
@@ -203,8 +227,21 @@ static int rpmsg_endpoint_cb(struct rpmsg_endpoint *ept, void *data, size_t len,
 static void rpmsg_service_unbind(struct rpmsg_endpoint *ept)
 {
     (void)ept;
-    SLAVE_DEBUG_I("Unexpected remote endpoint destroy.\r\n");
-    shutdown_req = 1;
+    SLAVE_DEBUG_E("[ALERT] Unexpected remote endpoint destroy! Entering Fail-Safe mode.\r\n");
+    
+    // 缩短看门狗超时时间到 1s，并立即刷新以装载新值，准备冷重启
+    if (g_wdt_ctrl.is_ready)
+    {
+        FWdtSetTimeout(&g_wdt_ctrl, (u32)(GenericTimerFrequecy() * 1));
+        FWdtRefresh(&g_wdt_ctrl);
+    }
+    
+    // 进入自愈死循环等待看门狗复位
+    SLAVE_DEBUG_E("Watchdog kick stopped. System will cold reset in 1s...\r\n");
+    while (1)
+    {
+        // 挂起忙等，停止一切喂狗
+    }
 }
 
 static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
@@ -231,6 +268,12 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
     u64 period = tick_hz / 2; // 500ms
     u64 last_tick = GenericTimerRead(GENERIC_TIMER_ID0);
 
+    // 重置心跳计数器，避免刚启动时由于连接延迟导致瞬间误判
+    g_heartbeat_miss_count = 0;
+    g_fail_safe_active = false;
+    g_has_received_first_heartbeat = false;
+    g_wdt_started = false;
+
     while (1)
     {
         platform_poll(priv);
@@ -239,6 +282,34 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
         if (current_tick - last_tick >= period)
         {
             last_tick = current_tick;
+
+            // 心跳丢失判定 (4 次 * 500ms = 2s)
+            if (!g_fail_safe_active && g_wdt_started)
+            {
+                if (g_has_received_first_heartbeat)
+                {
+                    g_heartbeat_miss_count++;
+                    if (g_heartbeat_miss_count >= 4)
+                    {
+                        g_fail_safe_active = true;
+                        SLAVE_DEBUG_E("[ALERT] Master Core Link Loss! Entering Fail-Safe mode.\r\n");
+                        
+                        // 缩短看门狗超时时间到 1s，并立即刷新以装载新值，准备冷重启
+                        if (g_wdt_ctrl.is_ready)
+                        {
+                            FWdtSetTimeout(&g_wdt_ctrl, (u32)(GenericTimerFrequecy() * 1));
+                            FWdtRefresh(&g_wdt_ctrl);
+                        }
+                        
+                        // 进入自愈死循环等待看门狗复位
+                        SLAVE_DEBUG_E("Watchdog kick stopped. System will cold reset in 1s...\r\n");
+                        while (1)
+                        {
+                            // 挂起忙等，停止一切喂狗
+                        }
+                    }
+                }
+            }
             
             // 1. 读取并上报 AHT20 温湿度
             float temp = 0.0f, humid = 0.0f;
@@ -273,6 +344,13 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
         }
     }
     
+    // 正常退出程序前关闭看门狗，防止停止从核服务时触发硬件意外重启
+    if (g_wdt_ctrl.is_ready)
+    {
+        FWdtStop(&g_wdt_ctrl);
+        g_wdt_started = false;
+    }
+
     rpmsg_destroy_ept(&lept);
     g_ept = NULL; /* 安全清理 */
     return ret;
@@ -284,6 +362,22 @@ int slave_init(void)
     Buzzer_Init();
     AHT20_Init();
     Gas_Sensor_Init();
+    
+    // 初始化和启动飞腾底层硬件看门狗 FWDT0
+    FError wdt_ret;
+    FWdtConfig wdt_config = *FWdtLookupConfig(FWDT0_ID);
+    memset(&g_wdt_ctrl, 0, sizeof(g_wdt_ctrl));
+    wdt_ret = FWdtCfgInitialize(&g_wdt_ctrl, &wdt_config);
+    if (FWDT_SUCCESS == wdt_ret)
+    {
+        // 初始超时设置为 10s
+        FWdtSetTimeout(&g_wdt_ctrl, (u32)(GenericTimerFrequecy() * 10));
+        SLAVE_DEBUG_I("FWDT0 initialized (10s timeout, pending start on handshake).\r\n");
+    }
+    else
+    {
+        SLAVE_DEBUG_E("FWDT0 initialization failed: 0x%x\r\n", wdt_ret);
+    }
     
     if (!platform_create_proc(&remoteproc_slave_00, &slave_00_priv, &kick_driver_00))
         return -1; 

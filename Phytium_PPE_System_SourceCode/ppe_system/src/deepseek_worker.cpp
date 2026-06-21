@@ -27,9 +27,10 @@ DeepSeekWorker::DeepSeekWorker(QObject *parent)
 
   // 加载环境变量
   QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-  m_apiUrl = env.value("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions");
-  m_apiKey = env.value("DEEPSEEK_API_KEY", "");
-  m_modelName = env.value("DEEPSEEK_MODEL", "deepseek-v4-flash");
+  m_apiUrl = env.value("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions").trimmed();
+  m_apiKey = env.value("DEEPSEEK_API_KEY", "").trimmed();
+  m_modelName = env.value("DEEPSEEK_MODEL", "deepseek-v4-flash").trimmed();
+  qDebug() << "[DeepSeek Debug] API Key length:" << m_apiKey.length() << "API Key:" << m_apiKey;
 }
 
 bool DeepSeekWorker::isNetworkAvailable() {
