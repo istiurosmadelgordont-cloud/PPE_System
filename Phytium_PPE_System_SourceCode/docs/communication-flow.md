@@ -101,15 +101,15 @@ uint8_t Calc_CRC8_Maxim(const uint8_t *data, size_t len) {
 
 ```mermaid
 sequenceDiagram
-    participant Master as Linux 主核 (Core 0)
-    participant Shared as 共享内存 (vring)
-    participant Slave as 从核 Standalone (Core 1)
+    participant Master as "Linux 主核 (Core 0)"
+    participant Shared as "共享内存 (vring)"
+    participant Slave as "从核 Standalone (Core 1)"
 
     Note over Master, Slave: 1. 建立双向心跳连接 (周期 500ms)
     loop Every 500ms
         Master->>Shared: 发送心跳数据包 (0x0003, CRC8)
         Shared->>Slave: 触发硬件 SGI 中断
-        Note over Slave: 从核收到心跳包<br/>重置 miss 计数为 0
+        Note over Slave: 从核收到心跳包<br>重置 miss 计数为 0
         Slave->>Shared: 原样回复心跳 ACK (0x0003, CRC8)
         Shared->>Master: 触发 SGI 中断
         Note over Master: 主核更新连接状态为【正常】
