@@ -165,6 +165,8 @@ Linux 侧主核 (CPU 0/2/3)                      从核裸机侧 (CPU 1)
 ## 8. 参考链接与规范
 
 *   **飞腾嵌入式 Gitee 文档仓**：[https://gitee.com/phytium_embedded/phytium-embedded-docs](https://gitee.com/phytium_embedded/phytium-embedded-docs)
+*   **飞腾 Standalone SDK 源码仓**：[https://gitee.com/phytium_embedded/phytium-standalone-sdk](https://gitee.com/phytium_embedded/phytium-standalone-sdk)
+*   **飞腾 FreeRTOS SDK 源码仓**：[https://gitee.com/phytium_embedded/phytium-free-rtos-sdk](https://gitee.com/phytium_embedded/phytium-free-rtos-sdk)
 *   **飞腾 OpenAMP 开发指南**：[https://gitee.com/phytium_embedded/phytium-embedded-docs/tree/master/open-amp](https://gitee.com/phytium_embedded/phytium-embedded-docs/tree/master/open-amp)
 *   **OpenAMP 官方项目组织**：[https://www.openampproject.org/](https://www.openampproject.org/)
 
