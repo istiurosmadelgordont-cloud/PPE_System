@@ -107,6 +107,12 @@ void DeepSeekWorker::requestAdvice(const QString &violationType) {
           } else if (t == "底层火警探头" || t == "底层物理火警" || t == "底座火焰触发") {
             riskHtml += "<li><b>物理火警触发</b>：起火点极易产生局部蔓延、毒气扩散及全厂爆燃险情。</li>";
             adviceHtml += "<li>立即启动全厂消防广播，疏散人员，切断起火区非消防电源，拨打119。</li>";
+          } else if (t == "有害气体报警" || t == "气体报警") {
+            riskHtml += "<li><b>有害气体泄漏</b>：现场有毒有害或可燃气体浓度超标，存在中毒、窒息或爆燃风险。</li>";
+            adviceHtml += "<li>立即佩戴正压式空气呼吸器进入现场，开启防爆排风扇，疏散下风向人员，查明泄漏源并切断。</li>";
+          } else if (t == "温湿度过慢" || t == "温湿度过高") {
+            riskHtml += "<li><b>环境温湿度超标</b>：持续高温高湿易导致作业人员中暑、设备过热故障及绝缘性能下降。</li>";
+            adviceHtml += "<li>加强现场通风降温，为作业人员提供防暑降温饮品，限制单次连续作业时间，监控电气设备运行温度。</li>";
           } else {
             riskHtml += QString("<li>检测到 [%1] 安全风险。</li>").arg(t);
             adviceHtml += "<li>请相关安全管理人员立刻前往现场核查。</li>";
@@ -247,6 +253,12 @@ QString DeepSeekWorker::getFallbackAdvice(const QString &violationType) {
     } else if (type == "底层物理火警" || type == "底座火焰触发" || type == "底层火警探头") {
       riskContent += "物理火警触发，极易产生起火点蔓延、有毒气体扩散及爆燃险情；";
       adviceContent += QString("%1. 立即拉响全厂消防广播，疏散人员，切断起火区非消防电源，拨打119；").arg(adviceIndex++);
+    } else if (type == "有害气体报警" || type == "气体报警") {
+      riskContent += "有害或可燃气体浓度超标，存在窒息、中毒或爆燃严重安全隐患；";
+      adviceContent += QString("%1. 佩戴呼吸防护器进入，开启排风设施，紧急疏散并切断气源；").arg(adviceIndex++);
+    } else if (type == "温湿度过快" || type == "温湿度过高") {
+      riskContent += "作业现场温度或湿度超出安全规范，易引发中暑及电气绝缘老化故障；";
+      adviceContent += QString("%1. 启动现场通风降温排湿，供给防暑物资，并加强设备电气巡检；").arg(adviceIndex++);
     }
   }
 

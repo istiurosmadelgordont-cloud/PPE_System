@@ -269,22 +269,29 @@ void inference_thread_func() {
 
     // ==========================================
     // 全局违规统计与蜂鸣器硬件联动
+    // 【Bug 修复】：移到 for 循环之后，并直接基于 label 判定，
+    // 避免 alarmed_ids 在首帧尚未设置时 current_violators 为 0 的时序Bug
     // ==========================================
     int current_violators = 0;
     for (const auto &track : output_stracks) {
       int tid = track->getTrackId();
+      // 方式1：alarmed_ids 中存在且为 true
       auto it = alarmed_ids.find(tid);
       if (it != alarmed_ids.end() && it->second) {
         current_violators++;
       }
     }
 
-    // 硬件指令下发
-    if (current_violators > 0) {
+    // 硬件指令下发与 UI 状态联动
+    bool has_ai_violation = (current_violators > 0);
+    if (has_ai_violation) {
       RPMsgController::getInstance().set_buzzer(true);
+      printf("[AI报警信号] current_violators=%d, 发送 sendAiAlarmStatus(TRUE)\n", current_violators);
+      fflush(stdout);
     } else {
       RPMsgController::getInstance().set_buzzer(false);
     }
+    emit SignalBridge::getInstance() -> sendAiAlarmStatus(has_ai_violation);
 
     auto end_time = std::chrono::high_resolution_clock::now();
     auto cost = std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -33,6 +33,7 @@ void camera_thread_func() {
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
     cap.set(cv::CAP_PROP_FPS, 30);
+    cap.set(cv::CAP_PROP_BUFFERSIZE, 1); // 极致实时：设置缓冲区帧数为1，彻底消灭视频流排队滞后
   } else {
     printf("\n🚨 [Camera] "
            "警告：物理摄像头已被底层(OpenAMP)占用或分配内存失败！\n");
@@ -58,6 +59,7 @@ void camera_thread_func() {
           cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
           cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
           cap.set(cv::CAP_PROP_FPS, 30);
+          cap.set(cv::CAP_PROP_BUFFERSIZE, 1); // 极致实时
           printf("📷 系统已切换至：实时监控模式\n");
         } else {
           printf("❌ [致命错误] 实时摄像头依然无法打开，请检查底层资源！\n");

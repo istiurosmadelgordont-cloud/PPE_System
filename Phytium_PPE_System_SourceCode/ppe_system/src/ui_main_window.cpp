@@ -351,6 +351,7 @@ MainWindow::MainWindow(QWidget *parent)
   addStatBar("未穿背心", barVest, lblVestCnt, "#F59E0B");
   addStatBar("未戴护目镜", barGoggle, lblGoggleCnt, "#3B82F6");
   addStatBar("抽烟报警", barSmoke, lblSmokeCnt, "#8B5CF6");
+  addStatBar("未戴手套", barGlove, lblGloveCnt, "#EC4899");
 
   statL->addSpacing(10); // 分隔线距离
 
@@ -499,6 +500,7 @@ MainWindow::MainWindow(QWidget *parent)
   m_cntVest = 0;
   m_cntGoggle = 0;
   m_cntSmoke = 0;
+  m_cntGlove = 0;
 
   barHelmet->setValue(0);
   lblHelmetCnt->setText("0");
@@ -508,15 +510,11 @@ MainWindow::MainWindow(QWidget *parent)
   lblGoggleCnt->setText("0");
   barSmoke->setValue(0);
   lblSmokeCnt->setText("0");
+  barGlove->setValue(0);
+  lblGloveCnt->setText("0");
 
   if (scoreWidget) {
     scoreWidget->setScore(100, "优秀");
-  }
-
-  // 假日志注入
-  for (int i = 0; i < 5; i++) {
-    addLogEntry("未戴安全帽", QDateTime::currentDateTime().toString("HH:mm:ss"),
-                "");
   }
 
   // ==========================================
@@ -547,6 +545,7 @@ MainWindow::MainWindow(QWidget *parent)
   connect(
       SignalBridge::getInstance(), &SignalBridge::sendPhysicalAlarmStatus, this,
       [this](bool triggered) {
+        m_fireAlerted = triggered;
         if (triggered) {
           headerRpmsgLabel->setText("● RPMsg 警报");
           headerRpmsgLabel->setStyleSheet(
@@ -560,10 +559,6 @@ MainWindow::MainWindow(QWidget *parent)
           sensorFlame->setStyleSheet("color: #EF4444; font-weight: bold; "
                                      "font-size: 14px; border: none;");
           scoreWidget->setScore(45, "危险 - 立即排查");
-          lightRed->setStyleSheet("background-color: #EF4444; border-radius: "
-                                  "12px; border: 2px solid #FCA5A5;");
-          lightGreen->setStyleSheet("background-color: #064E3B; border-radius: "
-                                    "12px; border: 2px solid #064E3B;");
         } else {
           headerRpmsgLabel->setText("● RPMsg 正常");
           headerRpmsgLabel->setStyleSheet(
@@ -577,11 +572,8 @@ MainWindow::MainWindow(QWidget *parent)
           sensorFlame->setStyleSheet("color: #10B981; font-weight: bold; "
                                      "font-size: 14px; border: none;");
           scoreWidget->setScore(84, "良好 - 压线40分");
-          lightRed->setStyleSheet("background-color: #551515; border-radius: "
-                                  "12px; border: 2px solid #551515;");
-          lightGreen->setStyleSheet("background-color: #10B981; border-radius: "
-                                    "12px; border: 2px solid #6EE7B7;");
         }
+        updateThreeColorLights();
       },
       Qt::QueuedConnection);
 
@@ -591,11 +583,17 @@ MainWindow::MainWindow(QWidget *parent)
               if (alarmed) {
                 sensorGas->setText("● 警报");
                 sensorGas->setStyleSheet("color: #EF4444; font-weight: bold; font-size: 14px; border: none;");
+                if (!m_gasAlerted) {
+                  m_gasAlerted = true;
+                  addLogEntry("有害气体报警", QDateTime::currentDateTime().toString("HH:mm:ss"), "");
+                }
               } else {
                 sensorGas->setText("● 正常");
                 sensorGas->setStyleSheet("color: #10B981; font-weight: bold; font-size: 14px; border: none;");
+                m_gasAlerted = false;
               }
             }
+            updateThreeColorLights();
           },
           Qt::QueuedConnection);
 
@@ -612,12 +610,49 @@ MainWindow::MainWindow(QWidget *parent)
             if (sensorHumid) {
               sensorHumid->setText(QString("%1%").arg(humid, 0, 'f', 1));
             }
+            // 温湿度过高判定
+            if (temp >= 35.0 || humid >= 85.0) {
+              if (!m_tempHumidAlerted) {
+                m_tempHumidAlerted = true;
+                addLogEntry("温湿度过高", QDateTime::currentDateTime().toString("HH:mm:ss"), "");
+              }
+            } else if (temp < 33.0 && humid < 80.0) {
+              m_tempHumidAlerted = false; // 迟滞释放，防抖
+            }
+            updateThreeColorLights();
+          },
+          Qt::QueuedConnection);
+
+  m_aiAlarmHoldTimer = new QTimer(this);
+  m_aiAlarmHoldTimer->setSingleShot(true);
+  connect(m_aiAlarmHoldTimer, &QTimer::timeout, this, [this]() {
+    m_aiAlerted = false;
+    updateThreeColorLights();
+  });
+
+  connect(SignalBridge::getInstance(), &SignalBridge::sendAiAlarmStatus, this,
+          [this](bool alarmed) {
+            if (alarmed) {
+              printf("[UI收到] sendAiAlarmStatus(TRUE) -> m_aiAlerted=true, 启动3秒维持\n");
+              fflush(stdout);
+              m_aiAlerted = true;
+              m_aiAlarmHoldTimer->start(3000); // 维持3秒警告状态
+              updateThreeColorLights();
+            } else {
+              // 只有当维持定时器未运行（已经超时）时，才直接拉低警告状态回到绿色
+              if (!m_aiAlarmHoldTimer->isActive()) {
+                m_aiAlerted = false;
+                updateThreeColorLights();
+              }
+            }
           },
           Qt::QueuedConnection);
 
   systemTimer = new QTimer(this);
   connect(systemTimer, &QTimer::timeout, this, &MainWindow::updateSystemStats);
-  systemTimer->start(2000);
+   systemTimer->start(2000);
+
+  updateThreeColorLights();
 
   resize(1366, 768); // 设置为接近 16:9 工业大屏比例
 }
@@ -761,9 +796,13 @@ void MainWindow::addLogEntry(QString type, QString time, QString imgPath) {
     m_cntSmoke++;
     if (lblSmokeCnt) lblSmokeCnt->setText(QString::number(m_cntSmoke));
     if (barSmoke) barSmoke->setValue(std::min(m_cntSmoke * 5, 100));
+  } else if (type == "未戴手套") {
+    m_cntGlove++;
+    if (lblGloveCnt) lblGloveCnt->setText(QString::number(m_cntGlove));
+    if (barGlove) barGlove->setValue(std::min(m_cntGlove * 5, 100));
   }
 
-  int total_violations = m_cntHelmet + m_cntVest + m_cntGoggle + m_cntSmoke;
+  int total_violations = m_cntHelmet + m_cntVest + m_cntGoggle + m_cntSmoke + m_cntGlove;
   int new_score = 100 - (total_violations * 5);
   if (new_score < 0) new_score = 0;
 
@@ -777,10 +816,13 @@ void MainWindow::addLogEntry(QString type, QString time, QString imgPath) {
     scoreWidget->setScore(new_score, statusText);
   }
 
+  updateThreeColorLights();
+
   // 触发 DeepSeek AI 安全顾问合并分析 (1.5秒缓存时间)
   if (type == "未戴安全帽" || type == "未穿背心" || type == "未戴护目镜" || 
       type == "未戴手套" || type == "抽烟报警" || type == "底层火警探头" || 
-      type == "底座火焰触发") {
+      type == "底座火焰触发" || type == "有害气体报警" || type == "气体报警" || 
+      type == "温湿度过高") {
     m_pendingViolations.append(type);
     m_dsAggregationTimer->start(1500); // 1.5秒延迟，合并同一批或相邻帧的所有违规
   }
@@ -1010,5 +1052,44 @@ void MainWindow::updateSystemStats() {
   if (sensorNoise) {
     int val = 58 + ((counter + 3) % 7);
     sensorNoise->setText(QString("%1dB").arg(val));
+  }
+}
+
+void MainWindow::updateThreeColorLights() {
+  bool has_emergency = m_fireAlerted || m_gasAlerted;
+  bool has_warning = m_aiAlerted || m_tempHumidAlerted;
+
+  static bool prev_emergency = false;
+  static bool prev_warning = false;
+  static bool first_run = true;
+
+  // 状态未改变时直接返回，避免重绘与 CSS 重构引起的卡顿
+  if (!first_run && has_emergency == prev_emergency && has_warning == prev_warning) {
+    return;
+  }
+  first_run = false;
+  prev_emergency = has_emergency;
+  prev_warning = has_warning;
+
+  printf("[ThreeColorLights] has_emergency: %d (fire: %d, gas: %d), has_warning: %d (aiAlerted: %d, Helmet: %d, Vest: %d, Goggle: %d, Smoke: %d, Glove: %d, tempHumidAlerted: %d)\n",
+         (int)has_emergency, (int)m_fireAlerted, (int)m_gasAlerted,
+         (int)has_warning, (int)m_aiAlerted, m_cntHelmet, m_cntVest, m_cntGoggle, m_cntSmoke, m_cntGlove, (int)m_tempHumidAlerted);
+  fflush(stdout);
+
+  if (has_emergency) {
+    // 红色紧急报警闪烁 (亮红)
+    if (lightRed) lightRed->setStyleSheet("background-color: #EF4444; border-radius: 12px; border: 2px solid #FCA5A5;");
+    if (lightYellow) lightYellow->setStyleSheet("background-color: #332000; border-radius: 12px; border: 2px solid #332000;");
+    if (lightGreen) lightGreen->setStyleSheet("background-color: #064E3B; border-radius: 12px; border: 2px solid #064E3B;");
+  } else if (has_warning) {
+    // 黄色一般告警 (亮黄)
+    if (lightRed) lightRed->setStyleSheet("background-color: #551515; border-radius: 12px; border: 2px solid #551515;");
+    if (lightYellow) lightYellow->setStyleSheet("background-color: #F59E0B; border-radius: 12px; border: 2px solid #FCD34D;");
+    if (lightGreen) lightGreen->setStyleSheet("background-color: #064E3B; border-radius: 12px; border: 2px solid #064E3B;");
+  } else {
+    // 绿色完全正常 (亮绿)
+    if (lightRed) lightRed->setStyleSheet("background-color: #551515; border-radius: 12px; border: 2px solid #551515;");
+    if (lightYellow) lightYellow->setStyleSheet("background-color: #332000; border-radius: 12px; border: 2px solid #332000;");
+    if (lightGreen) lightGreen->setStyleSheet("background-color: #10B981; border-radius: 12px; border: 2px solid #6EE7B7;");
   }
 }

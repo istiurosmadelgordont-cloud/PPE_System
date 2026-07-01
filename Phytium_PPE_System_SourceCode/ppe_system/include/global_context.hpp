@@ -28,7 +28,7 @@ extern std::atomic<bool> is_running;
 
 /// @brief [Core -> GPU/NPU] 视频推流队列。缓冲区设为 5
 /// 帧，严格控制内存占用，防止爆显存
-extern LockFreeRingBuffer<cv::Mat, 5> cap_queue;
+extern LockFreeRingBuffer<cv::Mat, 2> cap_queue;
 
 /// @brief [NPU -> Core] AI 推理报警事件队列。设为 20
 /// 深度，防止突发多并发违规导致监控日志丢失

@@ -43,6 +43,7 @@ signals:
   void sendAiMetrics(int latencyMs, int personCount);
   void sendGasAlarmStatus(bool alarmed);
   void sendEnvMetrics(double temp, double humid);
+  void sendAiAlarmStatus(bool alarmed);
 
 private:
   SignalBridge() = default;
@@ -96,6 +97,8 @@ private slots:
   void onDeepSeekAnalysisFinished(const QString &advice);
   void triggerAggregatedDeepSeek();
 
+  void updateThreeColorLights();
+
 private:
   // 辅助函数：创建统一样式的面板卡片
   QFrame *createPanelFrame();
@@ -138,11 +141,13 @@ private:
   QProgressBar *barVest;
   QProgressBar *barGoggle;
   QProgressBar *barSmoke;
+  QProgressBar *barGlove;
 
   QLabel *lblHelmetCnt;
   QLabel *lblVestCnt;
   QLabel *lblGoggleCnt;
   QLabel *lblSmokeCnt;
+  QLabel *lblGloveCnt;
 
   QLabel *aiLatencyLabel;
   QLabel *rpmsgStatusLabel;
@@ -160,6 +165,7 @@ private:
   unsigned long long prevIdleTicks;
   DeepSeekWorker *dsWorker;
   QTimer *m_dsAggregationTimer;
+  QTimer *m_aiAlarmHoldTimer;
   QStringList m_pendingViolations;
 
   // 累加违规计数器
@@ -167,4 +173,11 @@ private:
   int m_cntVest = 0;
   int m_cntGoggle = 0;
   int m_cntSmoke = 0;
+  int m_cntGlove = 0;
+
+  // 警报触发状态监控（防重复触发）
+  bool m_fireAlerted = false;
+  bool m_gasAlerted = false;
+  bool m_tempHumidAlerted = false;
+  bool m_aiAlerted = false;
 };

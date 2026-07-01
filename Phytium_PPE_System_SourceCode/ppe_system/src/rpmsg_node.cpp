@@ -159,7 +159,7 @@ void RPMsgController::rx_task() {
   pfd.events = POLLIN;
 
   // --- 防抖核心参数 ---
-  constexpr int CONFIRM_COUNT = 3; // 触发阈值：连续收到 3 次火警信号才确认
+  constexpr int CONFIRM_COUNT = 1; // 触发阈值：收到 1 次火警信号就立刻确认并红灯
   constexpr int RELEASE_TIMEOUT_MS = 3000; // 解除阈值：沉默 3 秒才解除报警
   constexpr int CONFIRM_WINDOW_MS = 2000; // 确认窗口：3 次信号必须在 2 秒内完成
 
@@ -168,7 +168,7 @@ void RPMsgController::rx_task() {
   auto last_fire_time = std::chrono::steady_clock::now();  // 最近一次火警的时间
 
   // --- 可燃气体防抖核心参数 ---
-  constexpr int GAS_CONFIRM_COUNT = 3; // 连续 3 次确认
+  constexpr int GAS_CONFIRM_COUNT = 1; // 连续 1 次就立刻确认
   constexpr int GAS_RELEASE_TIMEOUT_MS = 3000; // 沉默 3 秒解除
   constexpr int GAS_CONFIRM_WINDOW_MS = 2000; // 2 秒确认窗口
   int gas_count = 0;

@@ -12,7 +12,7 @@
 std::atomic<bool> is_running{true};
 
 /// @brief 实例化跨核无锁环形队列内存区，建立进程内极速通信管道
-LockFreeRingBuffer<cv::Mat, 5> cap_queue;
+LockFreeRingBuffer<cv::Mat, 2> cap_queue;
 LockFreeRingBuffer<AlarmEvent, 20> alarm_queue;
 
 /// @brief 实例化流媒体状态控制字，保障 UI 线程与采集线程的热更新一致性

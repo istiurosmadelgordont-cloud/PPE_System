@@ -298,3 +298,87 @@
       };
     ```
 *   **验证证据**：硬保留后，共享内存缓冲区在开机时即被内核完全封锁，无论系统后续运行多久，从核均能秒级启动成功。
+
+### BUG-24: Qt setStyleSheet 高频调用导致 UI 界面卡顿延迟
+*   **问题表现**：三色指示灯在正常运行时，整体 UI 界面存在明显卡顿，触控操作响应迟缓。
+*   **原因分析**：AI 推理引擎以约 10 FPS 的帧率不断触发 `sendAiAlarmStatus` 信号，每次都无条件调用 `setStyleSheet()` 重设三颗指示灯的 CSS 样式。Qt 的 `setStyleSheet` 是极重量级操作（需要解析 CSS 语法树、重构样式级联、强制触发 repaint），每秒十余次调用严重阻塞 UI 事件循环。
+*   **修改对比**：
+    ```diff
+    void MainWindow::updateThreeColorLights() {
+      bool has_emergency = m_fireAlerted || m_gasAlerted;
+      bool has_warning = m_aiAlerted || m_tempHumidAlerted;
+    + static bool prev_emergency = false;
+    + static bool prev_warning = false;
+    + static bool first_run = true;
+    + if (!first_run && has_emergency == prev_emergency && has_warning == prev_warning) {
+    +   return; // 状态未变化，跳过重绘
+    + }
+    + first_run = false;
+    + prev_emergency = has_emergency;
+    + prev_warning = has_warning;
+      // ... setStyleSheet 调用 ...
+    ```
+*   **验证证据**：优化后，`setStyleSheet` 仅在状态实际切换的瞬间触发一次，UI 界面帧率和触控响应恢复正常。
+
+### BUG-25: AI 违规检测后黄色告警灯不亮（信号链断裂 + 追踪器抖动双重 Bug）
+*   **问题表现**：AI 检测到 Without Helmet 违规并触发蜂鸣器，但三色灯始终保持绿色，黄灯完全没有反应。
+*   **原因分析**：存在两层 Bug 叠加：
+    1. **部署遗漏**：自动化部署脚本 `deploy_and_compile_host.py` 的文件列表中**缺少 `inference_node.cpp`**，导致本地修改的 `sendAiAlarmStatus` 信号发射代码从未被上传到开发板，板子上运行的仍是旧版无信号发射的代码。
+    2. **追踪器抖动**：BYTETracker 在目标微小移动时会频繁丢失/重建追踪 ID，违规目标仅存在 1-5 帧即消失。即使信号正确发射，`sendAiAlarmStatus(true)` 紧跟着大量 `(false)` 被淹没，黄灯一闪而过肉眼不可见。
+*   **修改对比**：
+    ```diff
+    # deploy_and_compile_host.py — 补全文件同步列表
+    + ("ppe_system/src/inference_node.cpp", "...inference_node.cpp"),
+    + ("ppe_system/src/camera_node.cpp", "...camera_node.cpp"),
+    + ("ppe_system/src/rpmsg_node.cpp", "...rpmsg_node.cpp"),
+    + ("ppe_system/include/global_context.hpp", "...global_context.hpp"),
+    + ("ppe_system/src/global_context.cpp", "...global_context.cpp"),
+    ```
+    ```diff
+    # ui_main_window.cpp — 3秒告警维持定时器（防抖动）
+    + m_aiAlarmHoldTimer = new QTimer(this);
+    + m_aiAlarmHoldTimer->setSingleShot(true);
+    + connect(m_aiAlarmHoldTimer, &QTimer::timeout, this, [this]() {
+    +   m_aiAlerted = false;
+    +   updateThreeColorLights();
+    + });
+    + // 收到 true 时启动 3 秒维持，期间 false 不生效
+    + if (alarmed) {
+    +   m_aiAlerted = true;
+    +   m_aiAlarmHoldTimer->start(3000);
+    +   updateThreeColorLights();
+    + }
+    ```
+*   **验证证据**：补全部署列表并加入 3 秒维持机制后，AI 检测到违规时黄灯立即亮起，且在画面抖动丢失目标后仍保持至少 3 秒不灭，彻底解决了黄灯"不亮"和"闪烁"的双重问题。
+
+### BUG-26: 火焰/气体物理传感器报警延迟过高（3 次确认策略过于保守）
+*   **问题表现**：打火机靠近火焰传感器后，大屏红灯要等很长时间（约 2-4 秒）才爆红，无法达到"即时级"火灾响应。
+*   **原因分析**：从核火焰探头通过 GPIO 边缘中断上报，每次电平跳变只发送**一个**数据包。但主核 `rpmsg_node.cpp` 中设置了 `CONFIRM_COUNT = 3`（需连续收到 3 次信号才确认火警），而边缘触发的信号只在跳变瞬间发送一次，导致无法在合理时间内积累 3 次计数。
+*   **修改对比**：
+    ```diff
+    - constexpr int CONFIRM_COUNT = 3;     // 触发阈值：连续收到 3 次才确认
+    + constexpr int CONFIRM_COUNT = 1;     // 触发阈值：收到 1 次即时确认
+    - constexpr int GAS_CONFIRM_COUNT = 3; // 气体：连续 3 次确认
+    + constexpr int GAS_CONFIRM_COUNT = 1; // 气体：1 次即时确认
+    ```
+*   **验证证据**：修改后，打火机靠近传感器的瞬间红灯即时爆红，响应延迟从数秒降至毫秒级。
+
+### BUG-27: 摄像头视频流管道积压导致 AI 检测画面延迟约 1 秒
+*   **问题表现**：在镜头前做出违规动作后，大屏画面和 AI 识别结果要滞后约 1 秒才反应。
+*   **原因分析**：V4L2 驱动默认缓冲 4 帧画面，加上无锁环形队列 `cap_queue` 容量为 5 帧，共 9 帧在管道中排队等待。AI 推理速度为 ~11 FPS，9 帧积压等价于 ~800ms 的固有延迟。
+*   **修改对比**：
+    ```diff
+    # camera_node.cpp — 压缩 V4L2 驱动缓冲
+    + cap.set(cv::CAP_PROP_BUFFERSIZE, 1);
+
+    # global_context.hpp / global_context.cpp — 压缩线程间帧队列
+    - LockFreeRingBuffer<cv::Mat, 5> cap_queue;
+    + LockFreeRingBuffer<cv::Mat, 2> cap_queue;
+    ```
+*   **验证证据**：优化后，管道积压从 9 帧降至 2-3 帧，端到端延迟从 ~800ms 降至 ~200ms，画面和 AI 响应基本达到人眼实时体验。
+
+### BUG-28: DeepSeek API 降级为本地预设模板（环境变量未注入）
+*   **问题表现**：DeepSeek 的 AI 安全建议变得很短，不再联网请求真实 API。
+*   **原因分析**：自动化部署脚本在编译完成后直接以 `sudo ./ppe_system &` 拉起新进程，但未通过 `run_real_deepseek.sh` 启动，导致 `DEEPSEEK_API_KEY` 等环境变量为空，系统自动切入本地降级模式。
+*   **修改对比**：此为操作流程问题而非代码 Bug。用户需在终端执行 `sudo killall ppe_system && ./run_real_deepseek.sh` 以带上真实 API Key 启动。
+*   **验证证据**：使用 `run_real_deepseek.sh` 启动后，日志显示 `API Key length: 35`，AI 建议恢复为联网的 DeepSeek 实时分析。
