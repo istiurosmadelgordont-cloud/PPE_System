@@ -1,12 +1,18 @@
 # 系统架构与核心业务流程图 (CICC 答辩专用)
 
-本篇文档基于 **0.2.1 异构多核系统框架 (Linux + Bare-Metal)** 与 **0.2.2 核心业务流程**，使用 Mermaid 进行了视觉重构。同时，附带了可用于答辩 PPT 报告的扁平化系统架构图和业务流水线拓扑图设计：
+本篇文档基于 **0.2.1 异构多核系统框架 (Linux + Bare-Metal)** 与 **0.2.2 核心业务流程**，使用 Mermaid 进行了视觉重构。同时，附带了可用于答辩 PPT 报告的标准版与高集成功能版的系统架构图及业务流水线拓扑图：
 
 ### 📸 CICC 答辩标准系统架构图 (0.2.1)
-![CICC 答辩系统架构图](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_system_architecture_1783167215642.png)
+*   **精简概要版**：
+    ![CICC 答辩系统架构图 - 标准版](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_system_architecture_1783167215642.png)
+*   **高集成全功能版**（包含双向心跳、FMEA自愈、无锁队列等所有深度功能点）：
+    ![CICC 答辩系统架构图 - 高集成版](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_detailed_architecture_1783167340529.png)
 
 ### 📸 CICC 答辩核心业务流程图 (0.2.2)
-![CICC 答辩核心业务流程图](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_system_flowchart_1783167228495.png)
+*   **精简概要版**：
+    ![CICC 答辩核心业务流程图 - 标准版](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_system_flowchart_1783167228495.png)
+*   **高集成全功能版**（完整覆盖四大FMEA防灾闭环测试流程）：
+    ![CICC 答辩核心业务流程图 - 高集成版](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_detailed_flowchart_1783167352811.png)
 
 ---
 
