@@ -324,12 +324,23 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
                     rpmsg_send(g_ept, &env_pkt, 6 + len);
                 }
             }
+            else
+            {
+                ProtocolData env_pkt;
+                env_pkt.command = DEVICE_CORE_ENV_REPORT;
+                int len = snprintf(env_pkt.data, MAX_DATA_LENGTH, "ERR");
+                env_pkt.length = len;
+                if (g_ept)
+                {
+                    rpmsg_send(g_ept, &env_pkt, 6 + len);
+                }
+            }
             
             // 2. 读取并上报 MQ-2 可燃气体状态
             int gas_level = Gas_Sensor_Read_Level();
             ProtocolData gas_pkt;
             gas_pkt.command = DEVICE_CORE_GAS_REPORT;
-            gas_pkt.data[0] = (gas_level == 0) ? '1' : '0'; // 0表示拉低触发警报，1表示安全
+            gas_pkt.data[0] = (gas_level == 1) ? '1' : '0'; // 15号引脚(P11/ADC)接Pin 13(GPIO1_12)：因为无比较器，清洁空气输出低电平0(安全)，超标高电平1(报警)
             gas_pkt.length = 1;
             if (g_ept)
             {

@@ -44,6 +44,7 @@ signals:
   void sendGasAlarmStatus(bool alarmed);
   void sendEnvMetrics(double temp, double humid);
   void sendAiAlarmStatus(bool alarmed);
+  void sendEnvError();
 
 private:
   SignalBridge() = default;

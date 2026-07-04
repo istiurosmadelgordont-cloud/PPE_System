@@ -623,6 +623,19 @@ MainWindow::MainWindow(QWidget *parent)
           },
           Qt::QueuedConnection);
 
+  connect(SignalBridge::getInstance(), &SignalBridge::sendEnvError, this,
+          [this]() {
+            if (sensorTemp) {
+              sensorTemp->setText("断开");
+              sensorTemp->setStyleSheet("color: #EF4444; font-weight: bold; font-size: 15px; border: none;");
+            }
+            if (sensorHumid) {
+              sensorHumid->setText("断开");
+              sensorHumid->setStyleSheet("color: #EF4444; font-weight: bold; font-size: 15px; border: none;");
+            }
+          },
+          Qt::QueuedConnection);
+
   m_aiAlarmHoldTimer = new QTimer(this);
   m_aiAlarmHoldTimer->setSingleShot(true);
   connect(m_aiAlarmHoldTimer, &QTimer::timeout, this, [this]() {
@@ -723,7 +736,8 @@ void MainWindow::updateFrame(const cv::Mat &frame) {
     rec_blink = !rec_blink; // 每秒切换一次闪烁状态
   }
 
-  cv::Mat displayFrame = frame.clone();
+  // 【优化：零拷贝】使用 const_cast 引用底层共享图像内存，彻底消灭 Mat 的 clone 深拷贝开销
+  cv::Mat &displayFrame = const_cast<cv::Mat&>(frame);
 
   // 绘制高科技感 FPS
   char fps_buf[32];

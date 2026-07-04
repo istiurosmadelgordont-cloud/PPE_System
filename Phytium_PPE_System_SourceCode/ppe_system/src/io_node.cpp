@@ -93,8 +93,17 @@ void io_thread_func() {
 
       std::string img_filename = base_dir + "/" + std::string(time_str) + "_" +
                                  event.violation_type + ".jpg";
+      std::string tmp_filename = img_filename + ".tmp.jpg";
 
-      cv::imwrite(img_filename, event.frame);
+      // 1. 先写入临时文件 (指定 .jpg 后缀以使 OpenCV 识别编码器)
+      cv::imwrite(tmp_filename, event.frame);
+
+      // 2. 通过原子重命名更名为正式文件，规避写盘瞬间断电导致图片损坏的风险
+      std::error_code rename_ec;
+      fs::rename(tmp_filename, img_filename, rename_ec);
+      if (rename_ec) {
+          printf("🚨 [IO 错误] 原子重命名失败: %s\n", rename_ec.message().c_str());
+      }
 
       if (log_file.is_open()) {
         log_file << time_str << "," << event.violation_type << ","
