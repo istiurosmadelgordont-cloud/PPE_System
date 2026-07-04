@@ -4,7 +4,7 @@
 
 ### 📸 CICC 答辩标准系统架构图 (0.2.1)
 *   **精简概要版**：
-    ![CICC 答辩系统架构图 - 标准版](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_system_architecture_1783167215642.png)
+    ![CICC 答辩系统架构图 - 标准版](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_system_framework_layout_1783167968144.png)
 *   **高集成全功能版**（包含双向心跳、FMEA自愈、无锁队列等所有深度功能点）：
     ![CICC 答辩系统架构图 - 高集成版](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_detailed_architecture_1783167340529.png)
 
