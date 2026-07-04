@@ -12,7 +12,7 @@
 *   **精简概要版**：
     ![CICC 答辩核心业务流程图 - 标准版](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_system_flowchart_1783167228495.png)
 *   **高集成全功能版**（完整覆盖四大FMEA防灾闭环测试流程）：
-    ![CICC 答辩核心业务流程图 - 高集成版](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_detailed_flowchart_1783167352811.png)
+    ![CICC 答辩核心业务流程图 - 高集成版](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/media__1783167519984.png)
 
 ---
 
