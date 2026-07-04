@@ -1,6 +1,12 @@
 # 系统架构与核心业务流程图 (CICC 答辩专用)
 
-本篇文档基于 **0.2.1 异构多核系统框架 (Linux + Bare-Metal)** 与 **0.2.2 核心业务流程**，使用 Mermaid 的 **Sleek-Dark（现代深色科技）** 风格重新进行了视觉重构，采用渐变微边框与高对比度高内聚色彩，可完美嵌入您的 PPT 与答辩报告。
+本篇文档基于 **0.2.1 异构多核系统框架 (Linux + Bare-Metal)** 与 **0.2.2 核心业务流程**，使用 Mermaid 进行了视觉重构。同时，附带了可用于答辩 PPT 报告的扁平化系统架构图和业务流水线拓扑图设计：
+
+### 📸 CICC 答辩标准系统架构图 (0.2.1)
+![CICC 答辩系统架构图](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_system_architecture_1783167215642.png)
+
+### 📸 CICC 答辩核心业务流程图 (0.2.2)
+![CICC 答辩核心业务流程图](file:///C:/Users/30406/.gemini/antigravity/brain/c0ec0f77-d185-471b-bcc1-95b86fc3c523/ppe_system_flowchart_1783167228495.png)
 
 ---
 
