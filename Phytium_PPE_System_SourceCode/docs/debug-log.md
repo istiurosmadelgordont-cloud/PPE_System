@@ -381,4 +381,25 @@
 *   **问题表现**：DeepSeek 的 AI 安全建议变得很短，不再联网请求真实 API。
 *   **原因分析**：自动化部署脚本在编译完成后直接以 `sudo ./ppe_system &` 拉起新进程，但未通过 `run_real_deepseek.sh` 启动，导致 `DEEPSEEK_API_KEY` 等环境变量为空，系统自动切入本地降级模式。
 *   **修改对比**：此为操作流程问题而非代码 Bug。用户需在终端执行 `sudo killall ppe_system && ./run_real_deepseek.sh` 以带上真实 API Key 启动。
-*   **验证证据**：使用 `run_real_deepseek.sh` 启动后，日志显示 `API Key length: 35`，AI 建议恢复为联网的 DeepSeek 实时分析。
+*   **验证证据**：使用 `run_real_deepseek.sh` 启动后，日志显示 `API Key length: 35`，AI 建议恢复为联网的 DeepSeek 实时 analysis。
+
+### BUG-29: YOLOv8 模型 MD5 校验因 Windows 换行符（CRLF）引发基准值不匹配
+*   **问题表现**：加入模型完整性校验后，AI 推理线程持续报“模型损坏或不存在”，尝试拉取脚本自愈，并最终退出推理。
+*   **原因分析**：`model1_int8.param` 作为文本文件，在 Windows Git 环境下被默认拉取为 CRLF 格式，对应的 MD5 码为 `b911...`，而开发板（Linux）上的文件为 LF 格式，对应实际 MD5 为 `e650...`。由于校验基准错位，触发自愈脚本 `pull_model.sh`；同时，自愈脚本中仅使用 `wget` 访问 GitHub，在断网/网络限制时会导致下载 0 字节空文件，引发加载崩溃。
+*   **修改对比**：
+    - 在 [inference_node.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/inference_node.cpp) 中，将 `model1_int8.param` 校验基准更正为 Linux 版哈希 `e65061a8d0b9e4344b2946a06e58f51b`。
+    - 重构 [pull_model.sh](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/scripts/pull_model.sh)，当 `wget` 失败时，新增离线自愈防线：自动从开发板内置的 `/home/user/Phytium_PPE_System_SourceCode/Phytium_PPE_System_SourceCode/ppe_system/model` 备份目录拷贝完好模型，建立双重自愈保障。
+*   **验证证据**：修正校验基准与自愈逻辑后，模型 MD5 检查一次性通过。
+
+### BUG-30: 原子写盘逻辑中使用 `.tmp` 后缀引发 OpenCV cv::imwrite 编码器异常崩溃
+*   **问题表现**：AI 触发违规报警拍照时，主程序瞬间闪退。
+*   **原因分析**：为了防断电损坏，我们将临时文件后缀定义为 `.tmp`（例如 `xxx.jpg.tmp`）。但是 OpenCV 的 `cv::imwrite` 在写盘时会通过文件后缀判断图像编码器（如 `.jpg` 对应 JPEG 编码）。由于 OpenCV 无法识别 `.tmp` 编码器，抛出 `cv::Exception` 导致主控程序异常中止。主控退出后，从核由于心跳丢失，自动触发看门狗冷重启。
+*   **修改对比**：
+    - 修改 [io_node.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/io_node.cpp) 中的临时文件名，将后缀修正为 `.tmp.jpg`，既能使 OpenCV 识别 JPEG 编码写盘，又能保障重命名原子性：
+    ```cpp
+    std::string tmp_filename = img_filename + ".tmp.jpg";
+    cv::imwrite(tmp_filename, event.frame);
+    std::error_code rename_ec;
+    fs::rename(tmp_filename, img_filename, rename_ec);
+    ```
+*   **验证证据**：修正后缀并执行 `sync` 物理刷盘后，高频触发违规拍照保存稳定通过，原子落盘成功。从核心跳完全正常。

@@ -27,7 +27,7 @@ void Buzzer_Init(void)
 {
     if(0 == buzzer_init_flag) 
     {
-        /* 根据引脚表，使用 GPIO3_1 */
+        /* 根据实际接线，恢复使用 GPIO3_1 */
         u32 buzzer_gpio_id = FGPIO_ID(FGPIO_CTRL_3, FGPIO_PIN_1);
         const FGpioConfig *config = FGpioLookupConfig(buzzer_gpio_id);
         

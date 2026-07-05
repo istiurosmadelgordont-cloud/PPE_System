@@ -24,6 +24,25 @@
 std::unordered_map<int, bool> alarmed_ids;
 std::unordered_map<int, int> track_id_to_label;
 
+bool verify_file_md5(const std::string& filepath, const std::string& expected_md5) {
+    std::string cmd = "md5sum " + filepath + " 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return false;
+    char buffer[128];
+    std::string result = "";
+    while (!feof(pipe)) {
+        if (fgets(buffer, 128, pipe) != nullptr)
+            result += buffer;
+    }
+    pclose(pipe);
+    if (result.length() < 32) return false;
+    std::string actual_md5 = result.substr(0, 32);
+    std::transform(actual_md5.begin(), actual_md5.end(), actual_md5.begin(), ::tolower);
+    std::string target_md5 = expected_md5;
+    std::transform(target_md5.begin(), target_md5.end(), target_md5.begin(), ::tolower);
+    return actual_md5 == target_md5;
+}
+
 void inference_thread_func() {
   // 1.约束当前主线程绑核大核(2&3)
   cpu_set_t cpuset;
@@ -54,11 +73,27 @@ void inference_thread_func() {
   opt.use_int8_storage = true;
   ppe_net.opt = opt;
 
-  // 3. 加载INT8量化模型
+  // 3. 加载INT8量化模型前进行 MD5 完整性校验与自愈
+  bool bin_ok = verify_file_md5("../model/model1_int8.bin", "fea590f2f1f743979c8247be39c34b0b");
+  bool param_ok = verify_file_md5("../model/model1_int8.param", "e65061a8d0b9e4344b2946a06e58f51b");
+  if (!bin_ok || !param_ok) {
+    printf("\n🚨 [AI 引擎] 检测到模型损坏或不存在，正在启动自动拉取自愈脚本...\n");
+    int ret = system("bash ../scripts/pull_model.sh");
+    (void)ret;
+    // 重新验证
+    bin_ok = verify_file_md5("../model/model1_int8.bin", "fea590f2f1f743979c8247be39c34b0b");
+    param_ok = verify_file_md5("../model/model1_int8.param", "e65061a8d0b9e4344b2946a06e58f51b");
+    if (!bin_ok || !param_ok) {
+      printf("\n🚨 [AI 引擎] 致命错误：模型自愈失败，请检查网络连接及远程 GitHub 仓库！\n");
+      is_running = false;
+      return;
+    }
+    printf("✅ [AI 引擎] 模型自愈成功！\n");
+  }
+
   if (ppe_net.load_param("../model/model1_int8.param") != 0 ||
       ppe_net.load_model("../model/model1_int8.bin") != 0) {
-    printf("\n🚨 致命错误：模型加载失败！请检查 ../model 路径下是否存在 param "
-           "和 bin 文件\n");
+    printf("\n🚨 致命错误：模型文件损坏，加载失败！\n");
     is_running = false;
     return;
   }

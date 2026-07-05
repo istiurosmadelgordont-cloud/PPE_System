@@ -262,16 +262,22 @@ void RPMsgController::rx_task() {
           }
         }
         else if (pkt.command == DEVICE_CORE_ENV_REPORT) {
-          float temp = 0.0f, humid = 0.0f;
           if (pkt.length < MAX_DATA_LENGTH) {
             pkt.data[pkt.length] = '\0';
           } else {
             pkt.data[MAX_DATA_LENGTH - 1] = '\0';
           }
-          if (sscanf(pkt.data, "T:%f,H:%f", &temp, &humid) == 2) {
-            printf("🌡️ [RPMsg] 收到温湿度上报: T=%.1f C, H=%.1f %%\n", temp, humid);
+          if (strcmp(pkt.data, "ERR") == 0) {
+            printf("🌡️ [RPMsg] 警告：收到从温湿度传感器掉线上报！\n");
             fflush(stdout);
-            emit SignalBridge::getInstance()->sendEnvMetrics(temp, humid);
+            emit SignalBridge::getInstance()->sendEnvError();
+          } else {
+            float temp = 0.0f, humid = 0.0f;
+            if (sscanf(pkt.data, "T:%f,H:%f", &temp, &humid) == 2) {
+              printf("🌡️ [RPMsg] 收到温湿度上报: T=%.1f C, H=%.1f %%\n", temp, humid);
+              fflush(stdout);
+              emit SignalBridge::getInstance()->sendEnvMetrics(temp, humid);
+            }
           }
         }
       }
