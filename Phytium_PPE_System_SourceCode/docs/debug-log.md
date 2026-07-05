@@ -28,8 +28,8 @@
 *   **修改对比**：
     ```diff
     # 编译部署脚本优化
-    - ssh user@172.20.10.4 "cd ppe_system/build && make -j4"
-    + ssh user@172.20.10.4 "cd ppe_system/build && rm -rf * && cmake .. && make -j4"
+    - ssh user@172.20.10.2 "cd ppe_system/build && make -j4"
+    + ssh user@172.20.10.2 "cd ppe_system/build && rm -rf * && cmake .. && make -j4"
     ```
 *   **验证证据**：在编译脚本中强制执行 `rm -rf *` 进行全新编译后，跨编译单元的成员寻址完全一致，Segfault 彻底消除。
 

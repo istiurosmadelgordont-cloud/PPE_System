@@ -84,7 +84,7 @@ Phytium_PPE_System_SourceCode/
 | **处理器架构** | ARM64 (AArch64) |
 | **运行操作系统** | Debian 12 (PIOS v3.2) |
 | **系统内核版本** | 6.6.63-phytium-embedded-v3.2 |
-| **开发板 IP 地址** | 172.20.10.4 / DHCP 自动分配 |
+| **开发板 IP 地址** | 172.20.10.2 / DHCP 自动分配 |
 | **默认登录账户** | user / root (密码均为: user) |
 
 ---

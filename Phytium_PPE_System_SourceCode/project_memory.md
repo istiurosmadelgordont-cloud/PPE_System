@@ -7,8 +7,8 @@ This document serves as the project memory for future Antigravity AI coding assi
 ## 1. Environment & Network Setup
 - **Windows Workspace**: `d:\飞腾派\CICC1004607+初赛+技术数据(代码类)\ppe4-28\Phytium_PPE_System_SourceCode`
 - **Phytium Pi (Remote Board)**:
-  - **Dynamic IP**: `172.20.10.4` (assigned via mobile hotspot DHCP).
-  - **SSH Access**: Passwordless SSH keys configured from Windows host to remote board (`user@172.20.10.4`, password is `user`).
+  - **Dynamic IP**: `172.20.10.2` (assigned via mobile hotspot DHCP).
+  - **SSH Access**: Passwordless SSH keys configured from Windows host to remote board (`user@172.20.10.2`, password is `user`).
   - **Directory**: `/home/user/Phytium_PPE_System_SourceCode`
 - **Proxy Workaround for Code Sync**:
   - Clash/Mihomo TUN mode on Windows blocks/resets large SFTP/SCP transfers (`Connection reset by peer`).
