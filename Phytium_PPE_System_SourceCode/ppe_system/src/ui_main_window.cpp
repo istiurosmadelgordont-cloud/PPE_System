@@ -873,9 +873,12 @@ void MainWindow::onDeepSeekAnalysisStarted() {
 }
 
 void MainWindow::onDeepSeekAnalysisFinished(const QString &advice) {
-  if (dsContent) {
     dsContent->setText(advice);
-  }
+    
+    // 【端云联动】触发飞书/企业微信 Webhook 推送脚本
+    // 我们在后台静默运行 python 脚本，把 DeepSeek 的文字传给它，它会自动去抓取最新的违规图片
+    QString pyCmd = QString("nohup python3 ../scripts/wechat_push.py \"%1\" >/dev/null 2>&1 &").arg(advice);
+    system(pyCmd.toUtf8().constData());
 }
 
 void MainWindow::showImageDialog(int row, int column) {
