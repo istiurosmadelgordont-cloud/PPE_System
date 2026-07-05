@@ -54,18 +54,7 @@ void camera_thread_func() {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
       if (current_source_mode == 0) {
-        bool ok = false;
         if (cap.open(0, cv::CAP_V4L2)) {
-          ok = true;
-        } else if (cap.open(1, cv::CAP_V4L2)) {
-          ok = true;
-          printf("ℹ️ 默认 video0 打开失败，已自动切换至备用节点 video1\n");
-        } else if (cap.open(2, cv::CAP_V4L2)) {
-          ok = true;
-          printf("ℹ️ 默认 video0/1 打开失败，已自动切换至备用节点 video2\n");
-        }
-
-        if (ok) {
           cap.set(cv::CAP_PROP_FOURCC,
                   cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
           cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
@@ -74,7 +63,7 @@ void camera_thread_func() {
           cap.set(cv::CAP_PROP_BUFFERSIZE, 1); // 极致实时
           printf("📷 系统已切换至：实时监控模式\n");
         } else {
-          printf("❌ [致命错误] 实时摄像头(video0/1/2)依然无法打开，请检查底层资源！\n");
+          printf("❌ [致命错误] 实时摄像头依然无法打开，请检查底层资源！\n");
         }
       } else if (current_source_mode == 1) {
         if (cap.open(video_path)) {
