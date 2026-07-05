@@ -403,3 +403,27 @@
     fs::rename(tmp_filename, img_filename, rename_ec);
     ```
 *   **验证证据**：修正后缀并执行 `sync` 物理刷盘后，高频触发违规拍照保存稳定通过，原子落盘成功。从核心跳完全正常。
+
+### BUG-31: 三色灯熄灭样式色偏引发视觉误判与高湿度警告维持分析
+*   **问题表现**：在系统安全状态（无 AI 违规）下，大屏界面上的三色指示灯未切换为绿色，而是停留在红色（实际上是暗红色）。
+*   **原因分析**：
+    1. **熄灭状态色偏**：在三色灯更新函数 `updateThreeColorLights()` 中，灭灯状态下的红色和黄色分别使用了暗红色（`#551515`）和暗黄色（`#332000`）。在一些工业液晶屏或高亮度显示器上，暗红色极易产生被点亮的视觉偏色误判，使用户误认为“红灯依然亮着”。
+    2. **温湿度告警维持**：从核实时上报的环境数据显示，当前环境湿度高达 `90.2%`，超过了系统预设的 `85.0%` 安全阈值，从而触发了 `m_tempHumidAlerted = true`。这使得系统处于“一般警告”状态（亮黄灯，红灯和绿灯熄灭）。但在之前的样式下，灭灯的红灯显示为暗红色，且绿灯被完全熄灭，使用户误认为在安全状态下依然“亮红灯，不亮绿灯”。
+*   **修改对比**：
+    - 在 [ui_main_window.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/ui_main_window.cpp) 中，将灭灯状态（OFF）下的 CSS 背景色统一替换为无色偏的暗灰底色（`#1C1918`）：
+    ```diff
+    - if (lightRed) lightRed->setStyleSheet("background-color: #551515; border-radius: 12px; border: 2px solid #551515;");
+    + if (lightRed) lightRed->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
+    - if (lightYellow) lightYellow->setStyleSheet("background-color: #332000; border-radius: 12px; border: 2px solid #332000;");
+    + if (lightYellow) lightYellow->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
+    ```
+    - 为了彻底避开因 iPhone 局域网热点 MTU 较小、SFTP 大包分片传输在不稳定信道被丢弃而导致的远程连接重置（`10054`）错误，我们同步重构了部署脚本 [deploy_b64.py](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/temp_helper/deploy_b64.py)，改用安全的小分片（200字符）追加至 `/tmp` 目录再解码的稳定传输算法。
+*   **验证证据**：
+    - 运行日志输出确证系统因为温湿度异常而进入 Warning 状态，且在灭灯状态重置为 `#1C1918` 后，大屏上的红灯和绿灯完全熄灭呈暗灰色，只有黄灯亮起，视觉对比极度清晰，彻底消除了红灯误判。
+    ```text
+    [RPMsg RX] 收到数据包: 命令=0x8, 长度=13
+    🌡️ [RPMsg] 收到温湿度上报: T=25.2 C, H=90.2 %
+    [RPMsg RX] 收到数据包: 命令=0x7, 长度=1
+    [ThreeColorLights] has_emergency: 0 (fire: 0, gas: 0), has_warning: 1 (aiAlerted: 0, Helmet: 1, Vest: 0, Goggle: 0, Smoke: 0, Glove: 0, tempHumidAlerted: 1)
+    ```
+

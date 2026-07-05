@@ -1096,17 +1096,17 @@ void MainWindow::updateThreeColorLights() {
   if (has_emergency) {
     // 红色紧急报警闪烁 (亮红)
     if (lightRed) lightRed->setStyleSheet("background-color: #EF4444; border-radius: 12px; border: 2px solid #FCA5A5;");
-    if (lightYellow) lightYellow->setStyleSheet("background-color: #332000; border-radius: 12px; border: 2px solid #332000;");
-    if (lightGreen) lightGreen->setStyleSheet("background-color: #064E3B; border-radius: 12px; border: 2px solid #064E3B;");
+    if (lightYellow) lightYellow->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
+    if (lightGreen) lightGreen->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
   } else if (has_warning) {
     // 黄色一般告警 (亮黄)
-    if (lightRed) lightRed->setStyleSheet("background-color: #551515; border-radius: 12px; border: 2px solid #551515;");
+    if (lightRed) lightRed->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
     if (lightYellow) lightYellow->setStyleSheet("background-color: #F59E0B; border-radius: 12px; border: 2px solid #FCD34D;");
-    if (lightGreen) lightGreen->setStyleSheet("background-color: #064E3B; border-radius: 12px; border: 2px solid #064E3B;");
+    if (lightGreen) lightGreen->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
   } else {
     // 绿色完全正常 (亮绿)
-    if (lightRed) lightRed->setStyleSheet("background-color: #551515; border-radius: 12px; border: 2px solid #551515;");
-    if (lightYellow) lightYellow->setStyleSheet("background-color: #332000; border-radius: 12px; border: 2px solid #332000;");
+    if (lightRed) lightRed->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
+    if (lightYellow) lightYellow->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
     if (lightGreen) lightGreen->setStyleSheet("background-color: #10B981; border-radius: 12px; border: 2px solid #6EE7B7;");
   }
 }

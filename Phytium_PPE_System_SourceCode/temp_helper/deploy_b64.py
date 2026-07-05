@@ -1,7 +1,46 @@
 import paramiko
+import base64
 import os
 import sys
 import time
+
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
+def upload_file_b64(ssh, local_path, remote_path):
+    print(f"Uploading {local_path} -> {remote_path} via chunked Base64...")
+    if not os.path.exists(local_path):
+        raise FileNotFoundError(f"Local file not found: {local_path}")
+        
+    with open(local_path, "rb") as f:
+        content = f.read()
+    b64_data = base64.b64encode(content).decode('utf-8')
+    
+    # 临时文件名称
+    temp_b64_path = f"/tmp/{os.path.basename(local_path)}.b64"
+    
+    # 清理并创建临时文件
+    ssh.exec_command(f"rm -f {temp_b64_path} && touch {temp_b64_path}")
+    time.sleep(0.1)
+    
+    # 2. 以 200 字符的小分片分批次追加，避免大包分片导致丢包
+    chunk_size = 200
+    for i in range(0, len(b64_data), chunk_size):
+        chunk = b64_data[i:i+chunk_size]
+        cmd = f'echo -n "{chunk}" >> {temp_b64_path}'
+        stdin, stdout, stderr = ssh.exec_command(cmd)
+        exit_status = stdout.channel.recv_exit_status()
+        if exit_status != 0:
+            raise RuntimeError(f"Failed to append chunk at index {i} for {local_path}: {stderr.read().decode()}")
+        time.sleep(0.005)
+        
+    # 解码临时文件
+    stdin, stdout, stderr = ssh.exec_command(f"base64 -d {temp_b64_path} > {remote_path} && rm -f {temp_b64_path}")
+    exit_status = stdout.channel.recv_exit_status()
+    if exit_status != 0:
+        err_msg = stderr.read().decode('utf-8', errors='ignore')
+        raise RuntimeError(f"Failed to decode base64 file for {remote_path}: {err_msg}")
+    print(f"Successfully uploaded {os.path.basename(local_path)}!")
 
 def main():
     host = "172.20.10.2"
@@ -26,17 +65,14 @@ def main():
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         ssh.connect(host, port=port, username=username, password=password, timeout=15)
-        print("Connected via SSH. Opening SFTP...")
-        sftp = ssh.open_sftp()
+        print("Connected via SSH. Starting Base64 upload process...")
         
         # 1. Upload files
         for rel_path, remote_path in files:
             local_path = os.path.join(local_base, rel_path)
-            print(f"Uploading {local_path} -> {remote_path}...")
-            sftp.put(local_path, remote_path)
+            upload_file_b64(ssh, local_path, remote_path)
             
-        sftp.close()
-        print("SFTP Upload completed.")
+        print("All files uploaded successfully.")
         
         # 2. Remote Compilation
         print("\n--- Compiling Host Application (ppe_system) ---")
