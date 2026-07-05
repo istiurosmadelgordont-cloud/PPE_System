@@ -55,6 +55,7 @@ def main():
         ("ppe_system/src/rpmsg_node.cpp", "/home/user/Phytium_PPE_System_SourceCode/ppe_system/src/rpmsg_node.cpp"),
         ("ppe_system/include/ui_main_window.hpp", "/home/user/Phytium_PPE_System_SourceCode/ppe_system/include/ui_main_window.hpp"),
         ("ppe_system/src/ui_main_window.cpp", "/home/user/Phytium_PPE_System_SourceCode/ppe_system/src/ui_main_window.cpp"),
+        ("ppe_system/src/camera_node.cpp", "/home/user/Phytium_PPE_System_SourceCode/ppe_system/src/camera_node.cpp"),
         ("ppe_system/scripts/feishu_push.py", "/home/user/Phytium_PPE_System_SourceCode/ppe_system/scripts/feishu_push.py"),
         ("ppe_system/run_real_deepseek.sh", "/home/user/Phytium_PPE_System_SourceCode/ppe_system/run_real_deepseek.sh"),
         ("temp_helper/test_deepseek.py", "/home/user/Phytium_PPE_System_SourceCode/temp_helper/test_deepseek.py"),
