@@ -427,3 +427,35 @@
     [ThreeColorLights] has_emergency: 0 (fire: 0, gas: 0), has_warning: 1 (aiAlerted: 0, Helmet: 1, Vest: 0, Goggle: 0, Smoke: 0, Glove: 0, tempHumidAlerted: 1)
     ```
 
+### BUG-32: 主核延迟测试发信信号桩嵌入与从核纯净固件恢复
+*   **问题表现**：在对系统进行主从核联动物理时延测试时，需要主核在向从核发送违规报警的瞬间拉高一个测试引脚，作为示波器抓取的时间起点（CH1）；同时需要从核固件维持生产状态，仅根据接收到的协议来触发报警引脚（CH2）。
+*   **原因分析**：之前在调试过程中，为定位引脚输出能力，在从核中植入了轮询反转电平的实验测试代码。为使正式测试更加严密，应恢复从核为纯净的接收回调模式。同时，需要在主核 C++ 的 `RPMsgController` 发送违规请求的瞬间拉高 `GPIO4_13`（引脚 37），并且在心跳空闲和程序退出时将其恢复为默认低电平 `0`。
+*   **修改对比**：
+    - 主核 [rpmsg_node.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/rpmsg_node.cpp) 中引入了 `linux/gpio.h`，增加 `/dev/gpiochip4` 控制函数：
+      ```cpp
+      static void write_gpio_gpiod(int value) {
+          static int line_fd = -1;
+          if (line_fd < 0) {
+              int chip_fd = open("/dev/gpiochip4", O_RDWR);
+              if (chip_fd >= 0) {
+                  struct gpiohandle_request req;
+                  // ... 设置 GPIO4_13 属性为输出，默认值为 0 ...
+                  ioctl(chip_fd, GPIO_GET_LINEHANDLE_IOCTL, &req);
+                  line_fd = req.fd;
+                  close(chip_fd);
+              }
+          }
+          if (line_fd >= 0) {
+              struct gpiohandle_data data;
+              data.values[0] = value;
+              ioctl(line_fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data);
+          }
+      }
+      ```
+    - 在 `init()` 和 `cleanup()` 中加入 `write_gpio_gpiod(0);`；在 `set_buzzer(bool on)` 发送封包前拉高引脚 `write_gpio_gpiod(on ? 1 : 0);`。
+    - 从核 [main.c](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/Baremetal_Slave_Node/main.c) 回退版本，完全去除测试引脚翻转的宏与死循环，回退为标准的 OpenAMP 轮询响应模式。
+*   **验证证据**：
+    - 重新编译并成功重启主从核。主核启动时 `dmesg` 表明 remoteproc 正确载入无污染固件；
+    - 执行测试时，主核在通过 AI 识别到违规瞬间触发 `set_buzzer(true)`，输出 `write_gpio_gpiod(1)` 成功使引脚 37 变为高电平（1），测试通过。
+
+

@@ -13,6 +13,7 @@
 #include <chrono>
 #include <fcntl.h>
 #include <linux/rpmsg.h>
+#include <linux/gpio.h>
 #include <poll.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,6 +23,33 @@
 
 #define MAX_DATA_LENGTH 256             ///< 最大数据包长度
 #define DEVICE_CORE_BUZZER_CTRL 0x0005U ///< 蜂鸣器控制命令字
+
+// 极速拉高/拉低 GPIO4_13 (gpiochip4 的第 13 号 line)
+static void write_gpio_gpiod(int value) {
+  static int line_fd = -1;
+  if (line_fd < 0) {
+    int chip_fd = open("/dev/gpiochip4", O_RDWR);
+    if (chip_fd >= 0) {
+      struct gpiohandle_request req;
+      memset(&req, 0, sizeof(req));
+      req.lineoffsets[0] = 13; // GPIO4_13
+      req.flags = GPIOHANDLE_REQUEST_OUTPUT;
+      req.lines = 1;
+      req.default_values[0] = 1; // 默认拉高电平 (1)
+      strncpy(req.consumer_label, "latency_test", sizeof(req.consumer_label));
+      if (ioctl(chip_fd, GPIO_GET_LINEHANDLE_IOCTL, &req) >= 0) {
+        line_fd = req.fd;
+      }
+      close(chip_fd);
+    }
+  }
+  if (line_fd >= 0) {
+    struct gpiohandle_data data;
+    memset(&data, 0, sizeof(data));
+    data.values[0] = value;
+    ioctl(line_fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data);
+  }
+}
 #define DEVICE_CORE_FIRE_REPORT 0x0006U ///< 火焰探头报警命令字
 #define DEVICE_CORE_GAS_REPORT 0x0007U  ///< 气体报警命令字
 #define DEVICE_CORE_ENV_REPORT 0x0008U  ///< 温湿度数据命令字
@@ -71,6 +99,9 @@ bool RPMsgController::init() {
       is_connected = true;
       printf("🔌 [RPMsg] 成功打通从核通信节点 /dev/rpmsg0！\n");
 
+      // 默认拉高测试引脚 GPIO4_13 (1)
+      write_gpio_gpiod(1);
+
       // 启动底层监听线程
       rx_running = true;
       rx_thread = std::thread(&RPMsgController::rx_task, this);
@@ -95,6 +126,9 @@ void RPMsgController::set_buzzer(bool on) {
     return;
   if (is_buzzer_on == on)
     return;
+
+  // 触发违规时拉低 GPIO4_13 (0)，恢复时拉高 (1)
+  write_gpio_gpiod(on ? 0 : 1);
 
   data_packet pkt;
   memset(&pkt, 0, sizeof(data_packet));
@@ -122,6 +156,8 @@ void RPMsgController::cleanup() {
 
   std::lock_guard<std::mutex> lock(mtx);
   if (is_connected && rpmsg_fd > 0) {
+    // 退出时恢复拉高测试引脚 GPIO4_13 (1)
+    write_gpio_gpiod(1);
     // 1. 关闭从核报警蜂鸣器
     data_packet pkt;
     memset(&pkt, 0, sizeof(data_packet));
