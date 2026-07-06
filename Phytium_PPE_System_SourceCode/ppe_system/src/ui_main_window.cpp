@@ -610,13 +610,13 @@ MainWindow::MainWindow(QWidget *parent)
             if (sensorHumid) {
               sensorHumid->setText(QString("%1%").arg(humid, 0, 'f', 1));
             }
-            // 温湿度过高判定
-            if (temp >= 35.0 || humid >= 85.0) {
+            // 温湿度过高判定（调高湿度阈值以适应普通室内基准，95%报警，90%释放）
+            if (temp >= 35.0 || humid >= 95.0) {
               if (!m_tempHumidAlerted) {
                 m_tempHumidAlerted = true;
                 addLogEntry("温湿度过高", QDateTime::currentDateTime().toString("HH:mm:ss"), "");
               }
-            } else if (temp < 33.0 && humid < 80.0) {
+            } else if (temp < 33.0 && humid < 90.0) {
               m_tempHumidAlerted = false; // 迟滞释放，防抖
             }
             updateThreeColorLights();
