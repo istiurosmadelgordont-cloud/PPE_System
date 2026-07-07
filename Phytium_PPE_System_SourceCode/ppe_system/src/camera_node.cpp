@@ -18,6 +18,29 @@
 #include <stdio.h>
 #include <thread>
 
+static bool open_any_camera(cv::VideoCapture& cap) {
+  for (int index : {0, 1, 2}) {
+    // 尝试打开 V4L2 摄像头通道
+    if (cap.open(index, cv::CAP_V4L2)) {
+      // 快速尝试读取一帧来确认不是空节点（v4l2 常常会映射出一个元数据节点）
+      cv::Mat test_frame;
+      cap >> test_frame;
+      if (!test_frame.empty()) {
+        printf("📷 [Camera] 自动探测并成功打开视频输入索引: %d\n", index);
+        // 配置最佳参数以保证流畅度和极致延迟
+        cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
+        cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
+        cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
+        cap.set(cv::CAP_PROP_FPS, 30);
+        cap.set(cv::CAP_PROP_BUFFERSIZE, 1); // 极致实时：缓冲区帧数为1
+        return true;
+      }
+      cap.release();
+    }
+  }
+  return false;
+}
+
 void camera_thread_func() {
   // 1.绑核CPU0(FTC310 小核)
   cpu_set_t cpuset;
@@ -25,24 +48,25 @@ void camera_thread_func() {
   CPU_SET(CORE_CAM, &cpuset);
   pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
 
-  // 2.尝试打开采集源
-  cv::VideoCapture cap(0, cv::CAP_V4L2);
-  // [注意]：不要在这里死磕 set 参数，如果没打开，set 会引发底层异常
-  if (cap.isOpened()) {
-    cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
-    cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
-    cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
-    cap.set(cv::CAP_PROP_FPS, 30);
-    cap.set(cv::CAP_PROP_BUFFERSIZE, 1); // 极致实时：设置缓冲区帧数为1，彻底消灭视频流排队滞后
-  } else {
-    printf("\n🚨 [Camera] "
-           "警告：物理摄像头已被底层(OpenAMP)占用或分配内存失败！\n");
-    printf("👉 系统已进入休眠轮询模式，请在 UI "
-           "界面点击【导入录像】进行离线分析。\n");
-    // 【关键修改】：绝对不要写 is_running = false; 也不要 return;
-    // 必须让线程活下去！
+  // 2. 自动探针和复位初始化
+  cv::VideoCapture cap;
+  bool is_opened = open_any_camera(cap);
+  
+  if (!is_opened) {
+    printf("\n⚠️ [Camera] 物理摄像头无法开启，尝试调用 USB 物理复位恢复机制...\n");
+    // 执行 USB 总线复位脚本
+    system("python3 /home/user/Phytium_PPE_System_SourceCode/temp_helper/reset_usb_camera.py > /dev/null 2>&1");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    is_opened = open_any_camera(cap);
   }
 
+  if (is_opened) {
+    printf("🎉 [Camera] 摄像头自动恢复成功并就绪。\n");
+  } else {
+    printf("\n🚨 [Camera] 警告：执行物理复位后，依然无法探测到有效视频输入源！\n");
+    printf("👉 系统将进入休眠轮询并自动降级，请在 UI 界面点击【导入录像】进行离线分析。\n");
+    // 【关键修改】：绝对不要写 is_running = false; 也不要 return; 必须让线程活下去！
+  }
   cv::Mat tmp_frame;
   auto last_frame_time = std::chrono::steady_clock::now();
   while (is_running) {
@@ -54,13 +78,7 @@ void camera_thread_func() {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
       if (current_source_mode == 0) {
-        if (cap.open(0, cv::CAP_V4L2)) {
-          cap.set(cv::CAP_PROP_FOURCC,
-                  cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
-          cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
-          cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
-          cap.set(cv::CAP_PROP_FPS, 30);
-          cap.set(cv::CAP_PROP_BUFFERSIZE, 1); // 极致实时
+        if (open_any_camera(cap)) {
           printf("📷 系统已切换至：实时监控模式\n");
         } else {
           printf("❌ [致命错误] 实时摄像头依然无法打开，请检查底层资源！\n");

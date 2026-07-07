@@ -458,4 +458,42 @@
     - 重新编译并成功重启主从核。主核启动时 `dmesg` 表明 remoteproc 正确载入无污染固件；
     - 执行测试时，主核在通过 AI 识别到违规瞬间触发 `set_buzzer(true)`，输出 `write_gpio_gpiod(1)` 成功使引脚 37 变为高电平（1），测试通过。
 
+### BUG-33: 摄像头节点漂移及锁死导致的 VideoCapture 开启失败
+*   **问题表现**：在开发板运行过程中，经常出现物理摄像头无法被打开的异常情况（报错：`can't open camera by index`），系统因而被动降级为离线图片轮询或报错挂起。
+*   **原因分析**：
+    1. **节点漂移**：Linux 在插拔或热重新分配 USB 设备时，摄像头的物理节点很容易从 `/dev/video0` 漂移至 `/dev/video1` 或 `/dev/video2`，而原代码中硬编码了 `cap(0)`；
+    2. **硬件锁死**：摄像头在进程未正常关闭时可能陷入死锁，或被未被彻底杀死的后台残留进程占用；
+    3. **元数据节点混淆**：同一个 USB 摄像头会产生多个 `/dev/video*` 节点，其中某些是只包含描述信息的虚拟元数据节点。如果直接 open 会成功，但实际读取帧（`cap >> frame`）时却为空，导致逻辑判断失准。
+*   **修改对比**：
+    - 在 [camera_node.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/camera_node.cpp) 中新增了 `open_any_camera(cap)` 函数：
+      ```cpp
+      static bool open_any_camera(cv::VideoCapture& cap) {
+        for (int index : {0, 1, 2}) {
+          if (cap.open(index, cv::CAP_V4L2)) {
+            cv::Mat test_frame;
+            cap >> test_frame; // 验证实际可抓取数据，排除空元数据节点
+            if (!test_frame.empty()) {
+              // 成功匹配并配置流参数...
+              return true;
+            }
+            cap.release();
+          }
+        }
+        return false;
+      }
+      ```
+    - 在 `camera_thread_func` 中，当 `open_any_camera` 首次失败时，自动在 C++ 代码中启动一键复位机制：
+      ```cpp
+      if (!is_opened) {
+        // 调用 USB3 物理复位脚本
+        system("python3 /home/user/Phytium_PPE_System_SourceCode/temp_helper/reset_usb_camera.py > /dev/null 2>&1");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        is_opened = open_any_camera(cap);
+      }
+      ```
+*   **验证证据**：
+    - 复位并编译部署后，查看 `/tmp/ppe_system.log` 表明在系统初始化摄像头遭遇占用时，代码能自动捕获并执行 USB 电源复位脚本；
+    - 再次轮询时自适应探测到了正确的 `/dev/video0` 输入节点，视频采集流成功开启，整个过程完全零手动干预，实现工业级硬件故障自愈。
+
+
 
