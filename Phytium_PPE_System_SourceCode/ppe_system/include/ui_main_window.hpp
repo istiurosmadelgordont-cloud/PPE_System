@@ -45,6 +45,7 @@ signals:
   void sendEnvMetrics(double temp, double humid);
   void sendAiAlarmStatus(bool alarmed);
   void sendEnvError();
+  void sendCrcError(int count);
 
 private:
   SignalBridge() = default;
@@ -86,6 +87,7 @@ public:
 public slots:
   void updateFrame(const cv::Mat &frame);
   void addLogEntry(QString type, QString time, QString imgPath);
+  void updateCrcError(int count);
 
 private slots:
   void onExitClicked();

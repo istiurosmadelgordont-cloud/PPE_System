@@ -421,10 +421,10 @@ MainWindow::MainWindow(QWidget *parent)
   sysL->addWidget(commTitle);
 
   QHBoxLayout *commLayout = new QHBoxLayout();
-  QLabel *crcLbl = new QLabel(
-      "CRC<br><span style='color:#A09080;font-weight:normal;'>0 次</span>");
-  crcLbl->setAlignment(Qt::AlignCenter);
-  crcLbl->setStyleSheet(
+  crcStatusLabel = new QLabel(
+      "CRC<br><span style='color:#10B981;font-weight:bold;'>0 次</span>");
+  crcStatusLabel->setAlignment(Qt::AlignCenter);
+  crcStatusLabel->setStyleSheet(
       "color:#10B981; font-size:11px; font-weight:bold; border:none;");
 
   QLabel *heartLbl =
@@ -433,7 +433,7 @@ MainWindow::MainWindow(QWidget *parent)
   heartLbl->setStyleSheet(
       "color:#A09080; font-size:11px; font-weight:bold; border:none;");
 
-  commLayout->addWidget(crcLbl);
+  commLayout->addWidget(crcStatusLabel);
   commLayout->addWidget(heartLbl);
   sysL->addLayout(commLayout);
 
@@ -532,6 +532,8 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::updateFrame, Qt::QueuedConnection);
   connect(SignalBridge::getInstance(), &SignalBridge::sendAlarmLog, this,
           &MainWindow::addLogEntry, Qt::QueuedConnection);
+  connect(SignalBridge::getInstance(), &SignalBridge::sendCrcError, this,
+          &MainWindow::updateCrcError, Qt::QueuedConnection);
   connect(SignalBridge::getInstance(), &SignalBridge::sendAiMetrics, this,
           [this](int latencyMs, int personCount) {
             if (aiLatencyLabel) {
@@ -1108,5 +1110,11 @@ void MainWindow::updateThreeColorLights() {
     if (lightRed) lightRed->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
     if (lightYellow) lightYellow->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
     if (lightGreen) lightGreen->setStyleSheet("background-color: #10B981; border-radius: 12px; border: 2px solid #6EE7B7;");
+  }
+}
+
+void MainWindow::updateCrcError(int count) {
+  if (crcStatusLabel) {
+    crcStatusLabel->setText(QString("CRC<br><span style='color:#EF4444;font-weight:bold;'>%1 次</span>").arg(count));
   }
 }

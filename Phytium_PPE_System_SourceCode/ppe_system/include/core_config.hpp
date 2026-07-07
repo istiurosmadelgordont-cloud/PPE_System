@@ -59,3 +59,20 @@ const cv::Scalar CLASS_COLORS[NUM_CLASSES] = {
 const char *const CLASS_NAMES[NUM_CLASSES] = {
     "Helmet",         "Glasses",       "Safety Vest",   "Gloves",
     "Without Helmet", "Without Glass", "Without Glove", "Without Safety Vest"};
+
+// Maxim CRC-8 (polynomial 0x31, reflected to 0x8C)
+static inline uint8_t calculate_crc8(const uint8_t *data, size_t len) {
+    uint8_t crc = 0x00;
+    for (size_t i = 0; i < len; i++) {
+        uint8_t inbyte = data[i];
+        for (uint8_t j = 0; j < 8; j++) {
+            uint8_t mix = (crc ^ inbyte) & 0x01;
+            crc >>= 1;
+            if (mix) {
+                crc ^= 0x8C;
+            }
+            inbyte >>= 1;
+        }
+    }
+    return crc;
+}

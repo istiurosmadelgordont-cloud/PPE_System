@@ -57,7 +57,7 @@ static volatile bool g_wdt_started = false;
 #define SLAVE_DEBUG_W(format, ...) FT_DEBUG_PRINT_W(SLAVE_DEBUG_TAG, format, ##__VA_ARGS__)
 #define SLAVE_DEBUG_E(format, ...) FT_DEBUG_PRINT_E(SLAVE_DEBUG_TAG, format, ##__VA_ARGS__)
 
-#define MAX_DATA_LENGTH      (RPMSG_BUFFER_SIZE / 2)
+#define MAX_DATA_LENGTH      255
 #define DEVICE_CORE_LED_CTRL 0x0004U 
 #define DEVICE_CORE_BUZZER_CTRL 0x0005U 
 #define DEVICE_CORE_FIRE_REPORT 0x0006U 
@@ -73,9 +73,28 @@ typedef struct
     uint32_t command;           
     uint16_t length;            
     char data[MAX_DATA_LENGTH]; 
+    uint8_t crc8;
 } ProtocolData;
 
 static ProtocolData protocol_data;
+
+static inline uint8_t calculate_crc8(const uint8_t *data, size_t len) {
+    uint8_t crc = 0x00;
+    for (size_t i = 0; i < len; i++) {
+        uint8_t inbyte = data[i];
+        for (uint8_t j = 0; j < 8; j++) {
+            uint8_t mix = (crc ^ inbyte) & 0x01;
+            crc >>= 1;
+            if (mix) {
+                crc ^= 0x8C;
+            }
+            inbyte >>= 1;
+        }
+    }
+    return crc;
+}
+
+int assemble_protocol_data(const ProtocolData *input, char *output, size_t *output_size);
 
 static volatile int shutdown_req = 0;
 struct remoteproc remoteproc_slave_00;
@@ -139,7 +158,12 @@ void Execute_Alarm_Arbitration(void) {
         report.command = DEVICE_CORE_FIRE_REPORT; 
         report.length = 1;
         report.data[0] = (sensor_level == 0) ? '1' : '0'; 
-        rpmsg_send(g_ept, &report, sizeof(ProtocolData));
+        
+        char tx_buf[512];
+        size_t tx_len = 0;
+        assemble_protocol_data(&report, tx_buf, &tx_len);
+        tx_buf[tx_len] = calculate_crc8((const uint8_t *)tx_buf, tx_len);
+        rpmsg_send(g_ept, tx_buf, tx_len + 1);
     }
 }
 
@@ -171,8 +195,18 @@ static int rpmsg_endpoint_cb(struct rpmsg_endpoint *ept, void *data, size_t len,
     int ret;
     (void)priv;
     ept->dest_addr = src;
+
+    if (len < 7) return RPMSG_SUCCESS;
+
+    // CRC-8 校验验证
+    uint8_t received_crc = ((uint8_t *)data)[len - 1];
+    uint8_t calculated_crc = calculate_crc8((const uint8_t *)data, len - 1);
+    if (received_crc != calculated_crc) {
+        printf("CRC8 verify failed!\r\n");
+        return RPMSG_SUCCESS;
+    }
     
-    // 只要收到主核任何消息，就认为主核已建立握手
+    // 只要收到主核任何通过校验的消息，就认为主核已建立握手
     g_has_received_first_heartbeat = true;
     if (!g_wdt_started)
     {
@@ -183,7 +217,14 @@ static int rpmsg_endpoint_cb(struct rpmsg_endpoint *ept, void *data, size_t len,
         }
     }
 
-    ret = parse_protocol_data((char *)data, len, &protocol_data);
+    // 【关键修复】：收到任何通过 CRC 校验的主核消息，都刷新心跳计数和看门狗
+    // 因为收到消息本身就证明主核还活着，不能只依赖 CHECK 命令喂狗
+    g_heartbeat_miss_count = 0;
+    if (!g_fail_safe_active && g_wdt_ctrl.is_ready && g_wdt_started) {
+        FWdtRefresh(&g_wdt_ctrl);
+    }
+
+    ret = parse_protocol_data((char *)data, len - 1, &protocol_data);
     if (ret != 0) return RPMSG_SUCCESS; 
 
     switch (protocol_data.command)
@@ -214,8 +255,37 @@ static int rpmsg_endpoint_cb(struct rpmsg_endpoint *ept, void *data, size_t len,
             if (!g_fail_safe_active && g_wdt_ctrl.is_ready) {
                 FWdtRefresh(&g_wdt_ctrl);
             }
-            ret = rpmsg_send(ept, &protocol_data, len);
-            if (ret < 0) return ret;
+            {
+                char tx_buf[512];
+                size_t tx_len = 0;
+                assemble_protocol_data(&protocol_data, tx_buf, &tx_len);
+                tx_buf[tx_len] = calculate_crc8((const uint8_t *)tx_buf, tx_len);
+                ret = rpmsg_send(ept, tx_buf, tx_len + 1);
+                if (ret < 0) return ret;
+            }
+            break;
+
+        case 0x0099U: // DEVICE_CORE_CRC_TEST (CRC测试触发命令)
+            for (int i = 0; i < 5; i++) {
+                ProtocolData corrupt_pkt;
+                corrupt_pkt.command = DEVICE_CORE_ENV_REPORT;
+                int len = snprintf(corrupt_pkt.data, MAX_DATA_LENGTH, "T:0.0,H:0.0");
+                corrupt_pkt.length = len;
+                
+                char tx_buf[512];
+                size_t tx_len = 0;
+                assemble_protocol_data(&corrupt_pkt, tx_buf, &tx_len);
+                // 故意破坏校验码 (取反) 产生损坏的包
+                tx_buf[tx_len] = calculate_crc8((const uint8_t *)tx_buf, tx_len) ^ 0xFF;
+                rpmsg_send(ept, tx_buf, tx_len + 1);
+                
+                // 在测试间隙喂狗并处理心跳，防止测试期间触发看门狗冷重启
+                g_heartbeat_miss_count = 0;
+                if (g_wdt_ctrl.is_ready && g_wdt_started) {
+                    FWdtRefresh(&g_wdt_ctrl);
+                }
+                fsleep_millisec(200); // 缩短间隔到 200ms，减少阻塞时间
+            }
             break;
             
         default:
@@ -283,13 +353,13 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
         {
             last_tick = current_tick;
 
-            // 心跳丢失判定 (4 次 * 500ms = 2s)
+            // 心跳丢失判定 (20 次 * 500ms = 10s)
             if (!g_fail_safe_active && g_wdt_started)
             {
                 if (g_has_received_first_heartbeat)
                 {
                     g_heartbeat_miss_count++;
-                    if (g_heartbeat_miss_count >= 4)
+                    if (g_heartbeat_miss_count >= 20)
                     {
                         g_fail_safe_active = true;
                         SLAVE_DEBUG_E("[ALERT] Master Core Link Loss! Entering Fail-Safe mode.\r\n");
@@ -321,7 +391,11 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
                 env_pkt.length = len;
                 if (g_ept)
                 {
-                    rpmsg_send(g_ept, &env_pkt, 6 + len);
+                    char tx_buf[512];
+                    size_t tx_len = 0;
+                    assemble_protocol_data(&env_pkt, tx_buf, &tx_len);
+                    tx_buf[tx_len] = calculate_crc8((const uint8_t *)tx_buf, tx_len);
+                    rpmsg_send(g_ept, tx_buf, tx_len + 1);
                 }
             }
             else
@@ -332,7 +406,11 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
                 env_pkt.length = len;
                 if (g_ept)
                 {
-                    rpmsg_send(g_ept, &env_pkt, 6 + len);
+                    char tx_buf[512];
+                    size_t tx_len = 0;
+                    assemble_protocol_data(&env_pkt, tx_buf, &tx_len);
+                    tx_buf[tx_len] = calculate_crc8((const uint8_t *)tx_buf, tx_len);
+                    rpmsg_send(g_ept, tx_buf, tx_len + 1);
                 }
             }
             
@@ -344,7 +422,11 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
             gas_pkt.length = 1;
             if (g_ept)
             {
-                rpmsg_send(g_ept, &gas_pkt, 6 + 1);
+                char tx_buf[512];
+                size_t tx_len = 0;
+                assemble_protocol_data(&gas_pkt, tx_buf, &tx_len);
+                tx_buf[tx_len] = calculate_crc8((const uint8_t *)tx_buf, tx_len);
+                rpmsg_send(g_ept, tx_buf, tx_len + 1);
             }
         }
         

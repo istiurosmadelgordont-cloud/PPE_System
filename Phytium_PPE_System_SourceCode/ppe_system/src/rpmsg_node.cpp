@@ -10,6 +10,7 @@
 
 #include "rpmsg_node.hpp"
 #include "ui_main_window.hpp" // 【绝对核心】：必须引入它，才能使用 SignalBridge 发送信号
+#include "core_config.hpp"
 #include <chrono>
 #include <fcntl.h>
 #include <linux/rpmsg.h>
@@ -21,7 +22,7 @@
 #include <unistd.h>
 #include <errno.h>
 
-#define MAX_DATA_LENGTH 256             ///< 最大数据包长度
+#define MAX_DATA_LENGTH 255             ///< 最大数据包长度 (255 数据 + 1 校验 = 256 字节，总包 262 字节)
 #define DEVICE_CORE_BUZZER_CTRL 0x0005U ///< 蜂鸣器控制命令字
 
 // 极速拉高/拉低 GPIO4_13 (gpiochip4 的第 13 号 line)
@@ -61,6 +62,7 @@ typedef struct {
   uint32_t command;
   uint16_t length;
   char data[MAX_DATA_LENGTH];
+  uint8_t crc8;                     // 追加 CRC-8 校验字段
 } data_packet;
 #pragma pack(pop)
 
@@ -135,12 +137,37 @@ void RPMsgController::set_buzzer(bool on) {
   pkt.command = DEVICE_CORE_BUZZER_CTRL;
   pkt.length = 1;
   pkt.data[0] = on ? '1' : '0';
+  pkt.crc8 = calculate_crc8((const uint8_t *)&pkt, sizeof(data_packet) - 1);
 
   if (write(rpmsg_fd, &pkt, sizeof(data_packet)) > 0) {
     is_buzzer_on = on;
     printf(on ? "🔊 [物理警报] 已发送指令：蜂鸣器 开启\n"
               : "🔇 [物理警报] 已发送指令：蜂鸣器 关闭\n");
   }
+}
+
+void RPMsgController::trigger_crc_test() {
+  for (int i = 0; i < 10; i++) {
+    {
+      std::lock_guard<std::mutex> lock(mtx);
+      if (is_connected && rpmsg_fd >= 0) {
+        data_packet pkt;
+        memset(&pkt, 0, sizeof(data_packet));
+        pkt.command = 0x0099U; // DEVICE_CORE_CRC_TEST
+        pkt.length = 0;
+        pkt.crc8 = calculate_crc8((const uint8_t *)&pkt, sizeof(data_packet) - 1);
+
+        if (write(rpmsg_fd, &pkt, sizeof(data_packet)) > 0) {
+          printf("🧪 [测试] 已向从核发送 CRC 校验测试触发指令\n");
+          fflush(stdout);
+          return;
+        }
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  }
+  printf("❌ [测试] 发送 CRC 校验测试触发指令失败：连接超时\n");
+  fflush(stdout);
 }
 
 void RPMsgController::cleanup() {
@@ -164,6 +191,7 @@ void RPMsgController::cleanup() {
     pkt.command = DEVICE_CORE_BUZZER_CTRL;
     pkt.length = 1;
     pkt.data[0] = '0';
+    pkt.crc8 = calculate_crc8((const uint8_t *)&pkt, sizeof(data_packet) - 1);
     write(rpmsg_fd, &pkt, sizeof(data_packet));
 
     // 2. 发送从核安全关闭命令，停止从核看门狗以防意外整机重启
@@ -172,6 +200,7 @@ void RPMsgController::cleanup() {
     memset(&shut_pkt, 0, sizeof(data_packet));
     shut_pkt.command = DEVICE_CORE_SHUTDOWN;
     shut_pkt.length = 0;
+    shut_pkt.crc8 = calculate_crc8((const uint8_t *)&shut_pkt, sizeof(data_packet) - 1);
     write(rpmsg_fd, &shut_pkt, sizeof(data_packet));
     std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 微小等待确保发送
 
@@ -226,6 +255,20 @@ void RPMsgController::rx_task() {
       int n = read(rpmsg_fd, &pkt, sizeof(data_packet));
 
       if (n > 0) {
+        if (n < 7) {
+          continue;
+        }
+        uint8_t received_crc = ((uint8_t *)&pkt)[n - 1];
+        uint8_t calculated_crc = calculate_crc8((const uint8_t *)&pkt, n - 1);
+        if (received_crc != calculated_crc) {
+          static int crc_err_count = 0;
+          crc_err_count++;
+          printf("⚠️ [CRC] 数据校验失败 #%d，丢弃该包\n", crc_err_count);
+          fflush(stdout);
+          emit SignalBridge::getInstance()->sendCrcError(crc_err_count);
+          continue;
+        }
+
         printf("[RPMsg RX] 收到数据包: 命令=0x%x, 长度=%d\n", pkt.command, pkt.length);
         fflush(stdout);
         if (pkt.command == DEVICE_CORE_FIRE_REPORT && pkt.data[0] == '1') {
@@ -356,14 +399,15 @@ void RPMsgController::heartbeat_task() {
   pkt.length = 0;
 
   while (heartbeat_running) {
-    // 每 500ms 发送一次空心跳包
+    // 每 500ms 发送一次心跳包
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     
     std::lock_guard<std::mutex> lock(mtx);
     if (is_connected && rpmsg_fd > 0) {
-      // 写入 6 字节数据头（4字节命令 + 2字节长度）
-      // 写入操作会强制 Linux 内核驱动遍历并处理 TX 和 RX 描述符，从而拉取滞留的温湿度数据包
-      int n = write(rpmsg_fd, &pkt, 6);
+      // 【Bug修复】必须发送完整 sizeof(data_packet) 字节，CRC 在结构体末尾
+      // 之前只发 7 字节，CRC 存在偏移 261 根本没发出去，导致从核 CRC 校验永远失败
+      pkt.crc8 = calculate_crc8((const uint8_t *)&pkt, sizeof(data_packet) - 1);
+      int n = write(rpmsg_fd, &pkt, sizeof(data_packet));
       (void)n;
     }
   }

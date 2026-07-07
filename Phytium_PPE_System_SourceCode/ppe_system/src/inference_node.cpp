@@ -23,6 +23,8 @@
 // 【优化 1】：全局记忆库改用 unordered_map，O(1) 哈希查找替代 O(log n) 红黑树
 std::unordered_map<int, bool> alarmed_ids;
 std::unordered_map<int, int> track_id_to_label;
+std::unordered_map<int, int> violation_streak;   // 每个追踪ID的连续违规帧数计数
+std::unordered_map<int, int> compliance_streak;  // 每个追踪ID的连续合规帧数计数
 
 bool verify_file_md5(const std::string& filepath, const std::string& expected_md5) {
     std::string cmd = "md5sum " + filepath + " 2>/dev/null";
@@ -257,16 +259,21 @@ void inference_thread_func() {
       if (label >= 4 && label <= 7) {
         std::string v_name = CLASS_NAMES[label];
 
-        // 状态机防抖：使用迭代器一次查找，避免重复 find()
-        auto it = alarmed_ids.find(track_id);
-        if (it == alarmed_ids.end() || !it->second) {
+        compliance_streak[track_id] = 0; // 违规时，清空合规连续计数
+        violation_streak[track_id]++;    // 违规连续计数累加
 
+        auto it = alarmed_ids.find(track_id);
+        bool is_already_alarmed = (it != alarmed_ids.end() && it->second);
+
+        // 未锁定警报 且 连续违规帧数 >= 3 帧 → 触发锁定！
+        if (!is_already_alarmed && violation_streak[track_id] >= 3) {
           // 遵守 SPSC 规则：无锁队列满载时丢弃新报警事件，避免生产者调用 pop() 导致头指针损坏（Segmentation fault）
           AlarmEvent event = {frame.clone(), v_name, now, now, 0};
           if (!alarm_queue.push(event)) {
-            printf("⚠️ [报警] IO队列已满，丢弃此次违规事件抓拍。\n");
+            printf("⚠️ [报警] IO队列已满，丢弃该次防抖确认违规事件。\n");
           }
           alarmed_ids[track_id] = true;
+          violation_streak[track_id] = 0; // 触发后清空计数
 
           auto now_c_log = std::chrono::system_clock::to_time_t(now);
           char time_str_display[64], time_str_file[64];
@@ -285,18 +292,25 @@ void inference_thread_func() {
               QString::fromStdString(v_name), QString(time_str_display),
               QString::fromStdString(expected_img_path));
 
-          printf("🔔 [报警] ID:%d 发生 %s 违规，触发抓拍！置信度: %.0f%%\n",
+          printf("🔔 [防抖警报锁死] ID:%d 连续 3 帧 %s 违规，触发抓拍！置信度: %.0f%%\n",
                  track_id, v_name.c_str(), score * 100);
         }
       }
       // ==========================================
-      // 合规洗白逻辑：缺少它蜂鸣器将永远无法停止
+      // 合规洗白逻辑：连续 15 帧合规才洗白恢复
       // ==========================================
       else if (label >= 0 && label <= 3) {
+        violation_streak[track_id] = 0;  // 合规时，清空违规连续计数
+        compliance_streak[track_id]++;   // 合规连续计数累加
+
         auto it = alarmed_ids.find(track_id);
-        if (it != alarmed_ids.end() && it->second) {
+        bool is_already_alarmed = (it != alarmed_ids.end() && it->second);
+
+        // 已锁定警报 且 连续合规帧数 >= 15 帧 → 解锁洗白！
+        if (is_already_alarmed && compliance_streak[track_id] >= 15) {
           it->second = false;
-          printf("✅ [合规] ID:%d 已恢复合规，报警锁解除，重新进入监控状态。\n",
+          compliance_streak[track_id] = 0; // 触发后清空计数
+          printf("✅ [防抖合规洗白] ID:%d 连续 15 帧合规，报警锁定状态洗白解除。\n",
                  track_id);
         }
       }
@@ -381,17 +395,25 @@ void inference_thread_func() {
     if (alarmed_ids.size() > 5000) {
       std::unordered_map<int, bool> active_alarms;
       std::unordered_map<int, int> active_labels;
+      std::unordered_map<int, int> active_violation_streak;
+      std::unordered_map<int, int> active_compliance_streak;
       for (const auto &track : output_stracks) {
         int tid = track->getTrackId();
         if (alarmed_ids.count(tid))
           active_alarms[tid] = alarmed_ids[tid];
         if (track_id_to_label.count(tid))
           active_labels[tid] = track_id_to_label[tid];
+        if (violation_streak.count(tid))
+          active_violation_streak[tid] = violation_streak[tid];
+        if (compliance_streak.count(tid))
+          active_compliance_streak[tid] = compliance_streak[tid];
       }
       alarmed_ids = std::move(active_alarms);
       track_id_to_label = std::move(active_labels);
+      violation_streak = std::move(active_violation_streak);
+      compliance_streak = std::move(active_compliance_streak);
       printf("🧹 [系统守护] 记忆库达上限，已精准清理离开画面的历史 "
-             "ID，释放内存！\n");
+             "ID 并重置防抖状态，释放内存！\n");
     }
   }
 }

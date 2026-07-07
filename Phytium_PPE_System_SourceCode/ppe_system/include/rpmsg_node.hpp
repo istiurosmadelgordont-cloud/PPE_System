@@ -54,6 +54,11 @@ public:
   void set_buzzer(bool on);
 
   /**
+   * @brief  触发从核发送损坏的 CRC8 包用于测试
+   */
+  void trigger_crc_test();
+
+  /**
    * @brief  安全释放硬件资源并销毁监听线程
    */
   void cleanup();

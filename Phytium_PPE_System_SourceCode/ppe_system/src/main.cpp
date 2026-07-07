@@ -36,11 +36,36 @@ int main(int argc, char *argv[]) {
   signal(SIGINT, signal_handler);
   signal(SIGTERM, signal_handler);
 
+  // 写入调试日志到本地文件，避免 stdout 缓冲或重定向干扰
+  FILE *dbg_f = fopen("/tmp/main_debug.log", "w");
+  if (dbg_f) {
+    fprintf(dbg_f, "main started\n");
+    fprintf(dbg_f, "argc: %d\n", argc);
+    for (int i = 0; i < argc; i++) {
+      fprintf(dbg_f, "argv[%d]: %s\n", i, argv[i]);
+    }
+    fclose(dbg_f);
+  }
+
+  bool run_crc_test = false;
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--test-crc") == 0) {
+      run_crc_test = true;
+    }
+  }
+
   // 1. 初始化图形引擎 (GUI Engine)
   QApplication app(argc, argv);
 
   // [新增] 提前拉起异构通信模块
   RPMsgController::getInstance().init();
+
+  if (run_crc_test) {
+    std::thread([]() {
+      std::this_thread::sleep_for(std::chrono::seconds(2));
+      RPMsgController::getInstance().trigger_crc_test();
+    }).detach();
+  }
 
   // 2. 将主线程（包含 Qt 的事件渲染循环）绑定在 Core 0 (小核)
   // 保证图形界面的流畅性，不与高计算密度的 AI 线程抢占资源
