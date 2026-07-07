@@ -495,5 +495,22 @@
     - 复位并编译部署后，查看 `/tmp/ppe_system.log` 表明在系统初始化摄像头遭遇占用时，代码能自动捕获并执行 USB 电源复位脚本；
     - 再次轮询时自适应探测到了正确的 `/dev/video0` 输入节点，视频采集流成功开启，整个过程完全零手动干预，实现工业级硬件故障自愈。
 
-
-
+### BUG-34: 自适应探测导致摄像头卡死超时与系统异常复位回滚
+*   **问题表现**：在真机测试中，开启自适应多通道探测及后台 `system()` 间接调用 Python SSH USB 复位后，发生 `select() timeout` 导致摄像头线程阻塞，且在非正常关闭电源后发生开机无信号蓝屏黑屏的系统级挂起故障。
+*   **原因分析**：
+    1. 自适应探测中多通道的 `cv::VideoCapture::open` 以及在未能成功设定 `MJPG` 格式前直接进行 `cap >> test_frame` 读取，会使 OpenCV 默认以 `YUYV` 格式启动采集，极易触发 `select() timeout` 驱动死锁；
+    2. C++ 中调用 SSH 的 Python 脚本重连本地 xHCI 控制器可能会导致系统级硬件中断死锁。
+*   **修改对比**：
+    - 将 [camera_node.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/camera_node.cpp) 回退至原版 `9070b38` 清爽版本，彻底剥离自动复位和多通道探测：
+      ```cpp
+      cv::VideoCapture cap(0, cv::CAP_V4L2);
+      if (cap.isOpened()) {
+        cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
+        cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
+        cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
+        cap.set(cv::CAP_PROP_FPS, 30);
+        cap.set(cv::CAP_PROP_BUFFERSIZE, 1);
+      }
+      ```
+*   **验证证据**：
+    - 将代码同步回退并成功推送到 GitHub。当前本地与开发板系统已采用回滚后的稳定采集逻辑，避免了不稳定的 USB 总线频繁复位。
