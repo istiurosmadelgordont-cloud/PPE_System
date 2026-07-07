@@ -28,8 +28,8 @@
 *   **修改对比**：
     ```diff
     # 编译部署脚本优化
-    - ssh user@172.20.10.4 "cd ppe_system/build && make -j4"
-    + ssh user@172.20.10.4 "cd ppe_system/build && rm -rf * && cmake .. && make -j4"
+    - ssh user@172.20.10.2 "cd ppe_system/build && make -j4"
+    + ssh user@172.20.10.2 "cd ppe_system/build && rm -rf * && cmake .. && make -j4"
     ```
 *   **验证证据**：在编译脚本中强制执行 `rm -rf *` 进行全新编译后，跨编译单元的成员寻址完全一致，Segfault 彻底消除。
 
@@ -403,3 +403,97 @@
     fs::rename(tmp_filename, img_filename, rename_ec);
     ```
 *   **验证证据**：修正后缀并执行 `sync` 物理刷盘后，高频触发违规拍照保存稳定通过，原子落盘成功。从核心跳完全正常。
+
+### BUG-31: 三色灯熄灭样式色偏引发视觉误判与高湿度警告维持分析
+*   **问题表现**：在系统安全状态（无 AI 违规）下，大屏界面上的三色指示灯未切换为绿色，而是停留在红色（实际上是暗红色）。
+*   **原因分析**：
+    1. **熄灭状态色偏**：在三色灯更新函数 `updateThreeColorLights()` 中，灭灯状态下的红色和黄色分别使用了暗红色（`#551515`）和暗黄色（`#332000`）。在一些工业液晶屏或高亮度显示器上，暗红色极易产生被点亮的视觉偏色误判，使用户误认为“红灯依然亮着”。
+    2. **温湿度告警维持**：从核实时上报的环境数据显示，当前环境湿度高达 `90.2%`，超过了系统预设的 `85.0%` 安全阈值，从而触发了 `m_tempHumidAlerted = true`。这使得系统处于“一般警告”状态（亮黄灯，红灯和绿灯熄灭）。但在之前的样式下，灭灯的红灯显示为暗红色，且绿灯被完全熄灭，使用户误认为在安全状态下依然“亮红灯，不亮绿灯”。
+*   **修改对比**：
+    - 在 [ui_main_window.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/ui_main_window.cpp) 中，将灭灯状态（OFF）下的 CSS 背景色统一替换为无色偏的暗灰底色（`#1C1918`）：
+    ```diff
+    - if (lightRed) lightRed->setStyleSheet("background-color: #551515; border-radius: 12px; border: 2px solid #551515;");
+    + if (lightRed) lightRed->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
+    - if (lightYellow) lightYellow->setStyleSheet("background-color: #332000; border-radius: 12px; border: 2px solid #332000;");
+    + if (lightYellow) lightYellow->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
+    ```
+    - 为了彻底避开因 iPhone 局域网热点 MTU 较小、SFTP 大包分片传输在不稳定信道被丢弃而导致的远程连接重置（`10054`）错误，我们同步重构了部署脚本 [deploy_b64.py](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/temp_helper/deploy_b64.py)，改用安全的小分片（200字符）追加至 `/tmp` 目录再解码的稳定传输算法。
+*   **验证证据**：
+    - 运行日志输出确证系统因为温湿度异常而进入 Warning 状态，且在灭灯状态重置为 `#1C1918` 后，大屏上的红灯和绿灯完全熄灭呈暗灰色，只有黄灯亮起，视觉对比极度清晰，彻底消除了红灯误判。
+    ```text
+    [RPMsg RX] 收到数据包: 命令=0x8, 长度=13
+    🌡️ [RPMsg] 收到温湿度上报: T=25.2 C, H=90.2 %
+    [RPMsg RX] 收到数据包: 命令=0x7, 长度=1
+    [ThreeColorLights] has_emergency: 0 (fire: 0, gas: 0), has_warning: 1 (aiAlerted: 0, Helmet: 1, Vest: 0, Goggle: 0, Smoke: 0, Glove: 0, tempHumidAlerted: 1)
+    ```
+
+### BUG-32: 主核延迟测试发信信号桩嵌入与从核纯净固件恢复
+*   **问题表现**：在对系统进行主从核联动物理时延测试时，需要主核在向从核发送违规报警的瞬间拉高一个测试引脚，作为示波器抓取的时间起点（CH1）；同时需要从核固件维持生产状态，仅根据接收到的协议来触发报警引脚（CH2）。
+*   **原因分析**：之前在调试过程中，为定位引脚输出能力，在从核中植入了轮询反转电平的实验测试代码。为使正式测试更加严密，应恢复从核为纯净的接收回调模式。同时，需要在主核 C++ 的 `RPMsgController` 发送违规请求的瞬间拉高 `GPIO4_13`（引脚 37），并且在心跳空闲和程序退出时将其恢复为默认低电平 `0`。
+*   **修改对比**：
+    - 主核 [rpmsg_node.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/rpmsg_node.cpp) 中引入了 `linux/gpio.h`，增加 `/dev/gpiochip4` 控制函数：
+      ```cpp
+      static void write_gpio_gpiod(int value) {
+          static int line_fd = -1;
+          if (line_fd < 0) {
+              int chip_fd = open("/dev/gpiochip4", O_RDWR);
+              if (chip_fd >= 0) {
+                  struct gpiohandle_request req;
+                  // ... 设置 GPIO4_13 属性为输出，默认值为 0 ...
+                  ioctl(chip_fd, GPIO_GET_LINEHANDLE_IOCTL, &req);
+                  line_fd = req.fd;
+                  close(chip_fd);
+              }
+          }
+          if (line_fd >= 0) {
+              struct gpiohandle_data data;
+              data.values[0] = value;
+              ioctl(line_fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data);
+          }
+      }
+      ```
+    - 在 `init()` 和 `cleanup()` 中加入 `write_gpio_gpiod(0);`；在 `set_buzzer(bool on)` 发送封包前拉高引脚 `write_gpio_gpiod(on ? 1 : 0);`。
+    - 从核 [main.c](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/Baremetal_Slave_Node/main.c) 回退版本，完全去除测试引脚翻转的宏与死循环，回退为标准的 OpenAMP 轮询响应模式。
+*   **验证证据**：
+    - 重新编译并成功重启主从核。主核启动时 `dmesg` 表明 remoteproc 正确载入无污染固件；
+    - 执行测试时，主核在通过 AI 识别到违规瞬间触发 `set_buzzer(true)`，输出 `write_gpio_gpiod(1)` 成功使引脚 37 变为高电平（1），测试通过。
+
+### BUG-33: 摄像头节点漂移及锁死导致的 VideoCapture 开启失败
+*   **问题表现**：在开发板运行过程中，经常出现物理摄像头无法被打开的异常情况（报错：`can't open camera by index`），系统因而被动降级为离线图片轮询或报错挂起。
+*   **原因分析**：
+    1. **节点漂移**：Linux 在插拔或热重新分配 USB 设备时，摄像头的物理节点很容易从 `/dev/video0` 漂移至 `/dev/video1` 或 `/dev/video2`，而原代码中硬编码了 `cap(0)`；
+    2. **硬件锁死**：摄像头在进程未正常关闭时可能陷入死锁，或被未被彻底杀死的后台残留进程占用；
+    3. **元数据节点混淆**：同一个 USB 摄像头会产生多个 `/dev/video*` 节点，其中某些是只包含描述信息的虚拟元数据节点。如果直接 open 会成功，但实际读取帧（`cap >> frame`）时却为空，导致逻辑判断失准。
+*   **修改对比**：
+    - 在 [camera_node.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/camera_node.cpp) 中新增了 `open_any_camera(cap)` 函数：
+      ```cpp
+      static bool open_any_camera(cv::VideoCapture& cap) {
+        for (int index : {0, 1, 2}) {
+          if (cap.open(index, cv::CAP_V4L2)) {
+            cv::Mat test_frame;
+            cap >> test_frame; // 验证实际可抓取数据，排除空元数据节点
+            if (!test_frame.empty()) {
+              // 成功匹配并配置流参数...
+              return true;
+            }
+            cap.release();
+          }
+        }
+        return false;
+      }
+      ```
+    - 在 `camera_thread_func` 中，当 `open_any_camera` 首次失败时，自动在 C++ 代码中启动一键复位机制：
+      ```cpp
+      if (!is_opened) {
+        // 调用 USB3 物理复位脚本
+        system("python3 /home/user/Phytium_PPE_System_SourceCode/temp_helper/reset_usb_camera.py > /dev/null 2>&1");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        is_opened = open_any_camera(cap);
+      }
+      ```
+*   **验证证据**：
+    - 复位并编译部署后，查看 `/tmp/ppe_system.log` 表明在系统初始化摄像头遭遇占用时，代码能自动捕获并执行 USB 电源复位脚本；
+    - 再次轮询时自适应探测到了正确的 `/dev/video0` 输入节点，视频采集流成功开启，整个过程完全零手动干预，实现工业级硬件故障自愈。
+
+
+

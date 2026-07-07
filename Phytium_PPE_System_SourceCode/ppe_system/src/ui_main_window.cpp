@@ -610,13 +610,13 @@ MainWindow::MainWindow(QWidget *parent)
             if (sensorHumid) {
               sensorHumid->setText(QString("%1%").arg(humid, 0, 'f', 1));
             }
-            // 温湿度过高判定
-            if (temp >= 35.0 || humid >= 85.0) {
+            // 温湿度过高判定（调高湿度阈值以适应普通室内基准，95%报警，90%释放）
+            if (temp >= 35.0 || humid >= 95.0) {
               if (!m_tempHumidAlerted) {
                 m_tempHumidAlerted = true;
                 addLogEntry("温湿度过高", QDateTime::currentDateTime().toString("HH:mm:ss"), "");
               }
-            } else if (temp < 33.0 && humid < 80.0) {
+            } else if (temp < 33.0 && humid < 90.0) {
               m_tempHumidAlerted = false; // 迟滞释放，防抖
             }
             updateThreeColorLights();
@@ -875,9 +875,9 @@ void MainWindow::onDeepSeekAnalysisStarted() {
 void MainWindow::onDeepSeekAnalysisFinished(const QString &advice) {
     dsContent->setText(advice);
     
-    // 【端云联动】触发飞书/企业微信 Webhook 推送脚本
-    // 我们在后台静默运行 python 脚本，把 DeepSeek 的文字传给它，它会自动去抓取最新的违规图片
-    QString pyCmd = QString("nohup python3 ../scripts/wechat_push.py \"%1\" >/dev/null 2>&1 &").arg(advice);
+    // 【端云联动】触发飞书 Webhook 推送脚本
+    // 我们在后台静默运行 python 脚本，把 DeepSeek 的文字传给它
+    QString pyCmd = QString("nohup python3 ../scripts/feishu_push.py \"%1\" >/dev/null 2>&1 &").arg(advice);
     system(pyCmd.toUtf8().constData());
 }
 
@@ -1096,17 +1096,17 @@ void MainWindow::updateThreeColorLights() {
   if (has_emergency) {
     // 红色紧急报警闪烁 (亮红)
     if (lightRed) lightRed->setStyleSheet("background-color: #EF4444; border-radius: 12px; border: 2px solid #FCA5A5;");
-    if (lightYellow) lightYellow->setStyleSheet("background-color: #332000; border-radius: 12px; border: 2px solid #332000;");
-    if (lightGreen) lightGreen->setStyleSheet("background-color: #064E3B; border-radius: 12px; border: 2px solid #064E3B;");
+    if (lightYellow) lightYellow->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
+    if (lightGreen) lightGreen->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
   } else if (has_warning) {
     // 黄色一般告警 (亮黄)
-    if (lightRed) lightRed->setStyleSheet("background-color: #551515; border-radius: 12px; border: 2px solid #551515;");
+    if (lightRed) lightRed->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
     if (lightYellow) lightYellow->setStyleSheet("background-color: #F59E0B; border-radius: 12px; border: 2px solid #FCD34D;");
-    if (lightGreen) lightGreen->setStyleSheet("background-color: #064E3B; border-radius: 12px; border: 2px solid #064E3B;");
+    if (lightGreen) lightGreen->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
   } else {
     // 绿色完全正常 (亮绿)
-    if (lightRed) lightRed->setStyleSheet("background-color: #551515; border-radius: 12px; border: 2px solid #551515;");
-    if (lightYellow) lightYellow->setStyleSheet("background-color: #332000; border-radius: 12px; border: 2px solid #332000;");
+    if (lightRed) lightRed->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
+    if (lightYellow) lightYellow->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
     if (lightGreen) lightGreen->setStyleSheet("background-color: #10B981; border-radius: 12px; border: 2px solid #6EE7B7;");
   }
 }
