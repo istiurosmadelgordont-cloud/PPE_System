@@ -525,7 +525,7 @@
 *   **修改对比**：
     - **从核代码**：在 [slaver_00_example.c](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/Baremetal_Slave_Node/src/slaver_00_example.c) 中，只要收到任何通过 CRC 校验的有效数据，就立刻重置心跳丢失计数 `g_heartbeat_miss_count = 0` 并调用 `FWdtRefresh` 刷新看门狗。同时将看门狗的心跳丢失计数宽限容忍度由 4 次（2秒）提高到 20 次（10秒），提升高负载下的抗抖动能力。
     - **主核代码**：在 [rpmsg_node.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/rpmsg_node.cpp) 的心跳线程中，发送心跳时写入完整 `sizeof(data_packet)` 字节，确保位于结构体末尾的 `crc8` 能够随心跳包正确送达从核。
-    - **自清洁优化**：在 [io_node.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/io_node.cpp) 中，将之前基于 `statvfs` 磁盘剩余空间的清理逻辑优化为更可控的“照片数量超 2000 张自动清理至 1500 张”的机制，防止频繁调用 `statvfs` 导致的系统卡死。
+    - **自清洁防洪**：在 [io_node.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/io_node.cpp) 中，保留了基于 `statvfs` 磁盘空间 85% 超限触发清理的策略。同时继续沿用 `save_counter` 计数判定，限制每 500 次 I/O 写盘才执行一次 `statvfs` 系统调用，平衡磁盘防洪效果与 CPU 开销。
 *   **验证证据**：
     - 将优化后的代码编译部署并成功拷机测试，测试工具 `verify_crc.py` 表明，在发送 5 组人为制造的损坏 CRC 数据包后，系统丢包计数正常增加，且之后能够正常接收温湿度心跳上报，未再触发看门狗冷重启。
     - 停止违规检测后，长周期静止运行，主从核通信指示灯工作正常，从核冷重启彻底解决。

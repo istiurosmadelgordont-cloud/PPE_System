@@ -15,41 +15,51 @@
 #include <fstream>
 #include <iostream>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
+#include <sys/types.h>
 #include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
 
 void check_and_cleanup_disk(const std::string &dir_path) {
-  std::vector<fs::path> jpg_files;
-
-  for (const auto &entry : fs::directory_iterator(dir_path)) {
-    if (entry.path().extension() == ".jpg") {
-      jpg_files.push_back(entry.path());
-    }
-  }
-
-  if (jpg_files.size() <= 2000)
+  struct statvfs stat;
+  if (statvfs(dir_path.c_str(), &stat) != 0)
     return;
 
-  printf("⚠️ [存储警告] 抓拍照片已达 %zu 张（超过 2000 张上限），触发定时清理！\n",
-         jpg_files.size());
+  double total_bytes = (double)stat.f_blocks * stat.f_frsize;
+  double available_bytes = (double)stat.f_bavail * stat.f_frsize;
+  double used_ratio = (total_bytes - available_bytes) / total_bytes;
 
-  // 按修改时间排序（最旧在前）
-  std::sort(jpg_files.begin(), jpg_files.end(),
-            [](const fs::path &a, const fs::path &b) {
-              return fs::last_write_time(a) < fs::last_write_time(b);
-            });
+  if (used_ratio > 0.85) {
+    printf("⚠️ [存储警告] 磁盘使用率达 %.1f%%，触发自我保护清理机制！\n",
+           used_ratio * 100);
 
-  // 删除最旧的，只保留最新的 1500 张
-  int delete_count = jpg_files.size() - 1500;
-  for (int i = 0; i < delete_count; ++i) {
-    std::error_code ec;
-    fs::remove(jpg_files[i], ec);
+    std::vector<fs::path> jpg_files;
+
+    for (const auto &entry : fs::directory_iterator(dir_path)) {
+      if (entry.path().extension() == ".jpg") {
+        jpg_files.push_back(entry.path());
+      }
+    }
+
+    if (jpg_files.size() < 100)
+      return;
+
+    std::sort(jpg_files.begin(), jpg_files.end(),
+              [](const fs::path &a, const fs::path &b) {
+                return fs::last_write_time(a) < fs::last_write_time(b);
+              });
+
+    int delete_count = jpg_files.size() * 0.2;
+    for (int i = 0; i < delete_count; ++i) {
+      std::error_code ec;
+      fs::remove(jpg_files[i], ec);
+    }
+
+    printf("🧹 [存储清理] 危机解除！已自动删除 %d 张最旧的抓拍证据。\n",
+           delete_count);
   }
-
-  printf("🧹 [存储清理] 已自动删除 %d 张最旧的抓拍证据，当前保留 1500 张。\n",
-         delete_count);
 }
 
 void io_thread_func() {
