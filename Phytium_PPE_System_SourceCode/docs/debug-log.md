@@ -6,6 +6,18 @@
 
 ---
 
+### BUG-36: 从核关停（echo stop）触发主核内核死锁卡死与 UI 连接指示残留绿色
+*   **问题表现**：在测试异构通信断连（如在板端强行关闭从核）时，Linux 主系统直接卡死卡顿，随后触发硬件看门狗硬重启。同时，在从核关闭的一瞬间，Qt UI 大屏上的 RPMsg 通信指示依然显示为绿色“正常/连接”状态。
+*   **原因分析**：
+    1. **指示残留**：原通信节点 `rpmsg_node.cpp` 中的 `rx_task` 和 `heartbeat_task` 未对 `poll()` 的异常返回（如 `POLLERR/POLLHUP`）及 `read()` / `write()` 失败的返回值（如从核下线时设备节点被卸载，发生读取错误）进行校验判定。这导致通信断开时，全局 `is_connected` 依然残留在 `true`。
+    2. **内核死锁卡死**：在设备断连后，自动重连线程检测到 `rpmsg_fd < 0`，立刻进入一秒一次的循环重连尝试，在没有判定从核是否在线的情况下高频调用了 `ioctl(ctrl_fd, RPMSG_CREATE_EPT_IOCTL, &eptinfo)`。在从核已被 `stop` 关停（remoteproc 处于 offline 状态）时，调用此 `ioctl` 会使 Linux 内核驱动尝试向未启动的核心发送端点创建请求，导致内核调用线程发生不可中断的睡眠锁死（D 状态），进而使系统内核级资源卡死，被硬件看门狗强制复位。
+*   **修改对比**：
+    - **原子化加固**：将 `is_connected` 和 `rpmsg_fd` 调整为 `std::atomic` 原型，防止数据竞争。
+    - **状态审计与安全避让**：在 [rpmsg_node.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/rpmsg_node.cpp) 中新增 `is_slave_core_running()` 状态判定，重连前读取从核状态节点 `/sys/class/remoteproc/remoteproc0/state`。若从核不处于 `running` 状态，安全挂起重连定时器避让 `ioctl` 写入，彻底防范内核级卡死。
+    - **链路异常瞬时检测**：加固 `poll()` 异常标志与 `read/write` 校验。一旦连接阻断，瞬间将 `is_connected` 重置为 `false`，使大屏指示灯立刻变红，显示为“断开”与“离线”状态。
+*   **验证证据**：
+    - 重构编译并成功拉起 `ppe_system`（PID：`10996`/`1290`）。从核在被正常停止时，系统不再卡死，UI 指示徽章及状态栏在 1 秒内瞬间变为红色的“断开”与“离线”。从核重新 `start` 开启后，主核在后台默默唤醒连接，指示灯瞬间恢复亮绿，实现了热插拔级自愈和异常显示保护。
+
 ### BUG-01: SPSC 无锁环形队列多线程 Pop-Push 并发段错误 (Segfault)
 *   **问题表现**：系统在摄像头持续高帧率拉流且推理线程满载运行时，随机出现 Segment fault 崩溃。
 *   **原因分析**：生产者线程（`camera_node`）在无锁队列满载时，错误地调用了 `.pop()` 以丢弃旧帧释放空间。这违反了 SPSC（单生产单消费）的单一执行流边界，导致读写索引（head/tail）发生数据竞争并指针越界。

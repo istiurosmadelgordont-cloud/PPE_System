@@ -78,8 +78,8 @@ private:
   RPMsgController();
   ~RPMsgController();
 
-  int rpmsg_fd;                 ///< 字符设备文件描述符
-  bool is_connected;            ///< 物理通道连接状态
+  std::atomic<int> rpmsg_fd;                 ///< 字符设备文件描述符
+  std::atomic<bool> is_connected;            ///< 物理通道连接状态
   bool is_buzzer_on;            ///< 蜂鸣器状态记忆（防止重复下发冗余指令）
   std::mutex mtx;               ///< 线程安全互斥锁，保护写操作
   std::thread rx_thread;        ///< 异步数据接收线程

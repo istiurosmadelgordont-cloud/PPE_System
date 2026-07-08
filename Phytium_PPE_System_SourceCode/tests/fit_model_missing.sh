@@ -10,7 +10,7 @@ echo "=== FIT-TC-12: 模型缺失安全退出测试 ==="
 echo "[前置条件] 系统未运行"
 echo ""
 
-MODEL_DIR="/home/user/ppe/ppe_system/model"
+MODEL_DIR="/home/user/Phytium_PPE_System_SourceCode/ppe_system/model"
 PARAM_FILE="$MODEL_DIR/model1_int8.param"
 BACKUP_FILE="$MODEL_DIR/model1_int8.param.bak"
 

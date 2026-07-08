@@ -66,6 +66,21 @@ typedef struct {
 } data_packet;
 #pragma pack(pop)
 
+static bool is_slave_core_running() {
+  FILE* fp = fopen("/sys/class/remoteproc/remoteproc0/state", "r");
+  if (!fp) return false;
+  char buf[32];
+  memset(buf, 0, sizeof(buf));
+  if (fgets(buf, sizeof(buf) - 1, fp) != nullptr) {
+    char* newline = strchr(buf, '\n');
+    if (newline) *newline = '\0';
+    newline = strchr(buf, '\r');
+    if (newline) *newline = '\0';
+  }
+  fclose(fp);
+  return strcmp(buf, "running") == 0;
+}
+
 RPMsgController::RPMsgController()
     : rpmsg_fd(-1), is_connected(false), is_buzzer_on(false), heartbeat_running(false) {}
 
@@ -75,6 +90,16 @@ bool RPMsgController::init() {
   std::lock_guard<std::mutex> lock(mtx);
   if (is_connected)
     return true;
+
+  if (!is_slave_core_running()) {
+    printf("⚠️ [RPMsg] 从核未启动，暂不打通 /dev/rpmsg0，开启接收与心跳守护线程，等待自动重连...\n");
+    fflush(stdout);
+    rx_running = true;
+    rx_thread = std::thread(&RPMsgController::rx_task, this);
+    heartbeat_running = true;
+    heartbeat_thread = std::thread(&RPMsgController::heartbeat_task, this);
+    return false;
+  }
 
   int ctrl_fd = open("/dev/rpmsg_ctrl0", O_RDWR);
   if (ctrl_fd < 0) {
@@ -139,10 +164,20 @@ void RPMsgController::set_buzzer(bool on) {
   pkt.data[0] = on ? '1' : '0';
   pkt.crc8 = calculate_crc8((const uint8_t *)&pkt, sizeof(data_packet) - 1);
 
-  if (write(rpmsg_fd, &pkt, sizeof(data_packet)) > 0) {
+  int n = write(rpmsg_fd, &pkt, sizeof(data_packet));
+  if (n > 0) {
     is_buzzer_on = on;
     printf(on ? "🔊 [物理警报] 已发送指令：蜂鸣器 开启\n"
               : "🔇 [物理警报] 已发送指令：蜂鸣器 关闭\n");
+    fflush(stdout);
+  } else {
+    printf("🚨 [RPMsg TX] 蜂鸣器控制包发送失败 (errno=%d, %s)，连接断开！\n", errno, strerror(errno));
+    fflush(stdout);
+    is_connected = false;
+    int fd_to_close = rpmsg_fd.exchange(-1);
+    if (fd_to_close > 0) {
+      close(fd_to_close);
+    }
   }
 }
 
@@ -157,9 +192,19 @@ void RPMsgController::trigger_crc_test() {
         pkt.length = 0;
         pkt.crc8 = calculate_crc8((const uint8_t *)&pkt, sizeof(data_packet) - 1);
 
-        if (write(rpmsg_fd, &pkt, sizeof(data_packet)) > 0) {
+        int n = write(rpmsg_fd, &pkt, sizeof(data_packet));
+        if (n > 0) {
           printf("🧪 [测试] 已向从核发送 CRC 校验测试触发指令\n");
           fflush(stdout);
+          return;
+        } else {
+          printf("🚨 [RPMsg TX] CRC 测试包发送失败 (errno=%d, %s)，连接断开！\n", errno, strerror(errno));
+          fflush(stdout);
+          is_connected = false;
+          int fd_to_close = rpmsg_fd.exchange(-1);
+          if (fd_to_close > 0) {
+            close(fd_to_close);
+          }
           return;
         }
       }
@@ -243,7 +288,35 @@ void RPMsgController::rx_task() {
 
   while (rx_running) {
     if (rpmsg_fd < 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      // 如果从核未处于 running 状态，跳过端点创建，以防 ioctl 强行通信引发内核死锁/挂起
+      if (!is_slave_core_running()) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        continue;
+      }
+
+      // 【自动重连】当设备节点不存在时，循环尝试创建并重新打开
+      int ctrl_fd = open("/dev/rpmsg_ctrl0", O_RDWR);
+      if (ctrl_fd >= 0) {
+        struct rpmsg_endpoint_info eptinfo;
+        memset(&eptinfo, 0, sizeof(eptinfo));
+        strncpy(eptinfo.name, "rpmsg-openamp-demo-channel", sizeof(eptinfo.name));
+        eptinfo.src = 0;
+        eptinfo.dst = 0;
+        ioctl(ctrl_fd, RPMSG_CREATE_EPT_IOCTL, &eptinfo);
+        close(ctrl_fd);
+      }
+      
+      int new_fd = open("/dev/rpmsg0", O_RDWR | O_NONBLOCK);
+      if (new_fd > 0) {
+        rpmsg_fd = new_fd;
+        is_connected = true;
+        pfd.fd = new_fd;
+        pfd.events = POLLIN;
+        printf("🔌 [RPMsg RX] 成功重新打通从核通信节点 /dev/rpmsg0！\n");
+        fflush(stdout);
+      } else {
+        std::this_thread::sleep_for(std::chrono::seconds(1)); // 1秒后重试
+      }
       continue;
     }
 
@@ -251,10 +324,32 @@ void RPMsgController::rx_task() {
     int timeout_ms = is_physical_alarm ? 50 : 200;
     int ret = poll(&pfd, 1, timeout_ms);
 
+    if (ret < 0 || (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+      printf("🚨 [RPMsg RX] poll检测到端点异常 (HUP/ERR)，连接断开！\n");
+      fflush(stdout);
+      is_connected = false;
+      int fd_to_close = rpmsg_fd.exchange(-1);
+      if (fd_to_close > 0) {
+        close(fd_to_close);
+      }
+      continue;
+    }
+
     if (ret > 0 && (pfd.revents & POLLIN)) {
       int n = read(rpmsg_fd, &pkt, sizeof(data_packet));
 
-      if (n > 0) {
+      if (n <= 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+          printf("🚨 [RPMsg RX] 读取失败 (n=%d, errno=%d)，连接断开！\n", n, errno);
+          fflush(stdout);
+          is_connected = false;
+          int fd_to_close = rpmsg_fd.exchange(-1);
+          if (fd_to_close > 0) {
+            close(fd_to_close);
+          }
+        }
+        continue;
+      }
         if (n < 7) {
           continue;
         }
@@ -360,7 +455,6 @@ void RPMsgController::rx_task() {
           }
         }
       }
-    }
 
     // --- 解除逻辑：必须沉默足够长时间才能解除 ---
     if (is_physical_alarm) {
@@ -408,7 +502,15 @@ void RPMsgController::heartbeat_task() {
       // 之前只发 7 字节，CRC 存在偏移 261 根本没发出去，导致从核 CRC 校验永远失败
       pkt.crc8 = calculate_crc8((const uint8_t *)&pkt, sizeof(data_packet) - 1);
       int n = write(rpmsg_fd, &pkt, sizeof(data_packet));
-      (void)n;
+      if (n < 0) {
+        printf("🚨 [RPMsg TX] 心跳包发送失败 (errno=%d, %s)，连接断开！\n", errno, strerror(errno));
+        fflush(stdout);
+        is_connected = false;
+        int fd_to_close = rpmsg_fd.exchange(-1);
+        if (fd_to_close > 0) {
+          close(fd_to_close);
+        }
+      }
     }
   }
 }
