@@ -101,10 +101,14 @@
 
 ### 4.7 安全可靠性保障模块 (REQ-12, REQ-13)
 
-**风险描述**: Linux 系统因 OOM Killer、段错误或内核 Panic 导致主控程序跑飞或死锁。
-**管控措施** (代码位置: 主从双侧心跳协议栈):
-- **双向心跳监督**: 依靠 OpenAMP RPMsg 每 500ms 互发 `DEVICE_CORE_CHECK`。
+**风险描述**: Linux 系统因 OOM Killer、段错误或内核 Panic 导致主控程序跑飞或死锁；从核被反复关停/重新上线时导致通信端口号漂移及内核通信死锁。
+**管控措施** (代码位置: `rpmsg_node.cpp`, `rpmsg_node.hpp`):
+- **双向心跳监督**: 依靠 OpenAMP RPMsg 每 500ms 互发对齐的 `DEVICE_CORE_CHECK` 帧。
 - **硬件级自愈**: 从核 `g_heartbeat_miss_count >= 4` 时，调用 `FWdtSetTimeout(&g_wdt_ctrl, 1)` 将片上硬件看门狗时限强行缩短至 1 秒，并停止喂狗，触发系统冷重启 (Cold Reset)。
+- **心跳与控制帧精确对齐**: 规范数据帧格式为 262 字节（255字节数据 + 1字节 CRC8 校验 + 6字节帧头），双侧严格对齐，彻底排除由于内存对齐或帧大小不匹配引起的频繁误判复位。
+- **动态通道自愈与防死锁设计**: 
+  - **防止内核死锁**：在关闭或从核未运行时，主核 `is_slave_core_running()` 拦截机制将暂停调用 `ioctl` 申请端点，防止阻塞在内核 `D-state`（不可中断睡眠）导致整机卡死。
+  - **动态通道识别**：在 `rpmsg_node.cpp` 中引入 `find_active_rpmsg_device()`。在反复开关从核产生 `/dev/rpmsg0` ~ `/dev/rpmsgX` 顺延占位节点时，动态检索并自适应打开数值最大的最新活动端口（如 `/dev/rpmsg6`），实现通信的热插拔与秒级热恢复，无需重启 Linux 系统。
 
 ### 4.8 智能安全顾问模块 (REQ-14)
 
