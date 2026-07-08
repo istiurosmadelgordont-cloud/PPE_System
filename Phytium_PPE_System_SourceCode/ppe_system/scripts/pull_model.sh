@@ -5,7 +5,7 @@ echo "[Self-Healing] Downloading model files from GitHub..."
 wget -q --timeout=15 --tries=3 -O "$MODEL_DIR/model1_int8.param.tmp" "https://raw.githubusercontent.com/istiurosmadelgordont-cloud/PPE_System/main/ppe_system/model/model1_int8.param"
 wget -q --timeout=15 --tries=3 -O "$MODEL_DIR/model1_int8.bin.tmp" "https://raw.githubusercontent.com/istiurosmadelgordont-cloud/PPE_System/main/ppe_system/model/model1_int8.bin"
 
-if [ -f "$MODEL_DIR/model1_int8.param.tmp" ] && [ -f "$MODEL_DIR/model1_int8.bin.tmp" ]; then
+if [ -s "$MODEL_DIR/model1_int8.param.tmp" ] && [ -s "$MODEL_DIR/model1_int8.bin.tmp" ]; then
     mv "$MODEL_DIR/model1_int8.param.tmp" "$MODEL_DIR/model1_int8.param"
     mv "$MODEL_DIR/model1_int8.bin.tmp" "$MODEL_DIR/model1_int8.bin"
     echo "[Self-Healing] Download successful and replaced models."

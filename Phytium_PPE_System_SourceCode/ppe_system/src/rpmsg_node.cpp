@@ -21,6 +21,10 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <glob.h>
+#include <vector>
+#include <algorithm>
+#include <string>
 
 #define MAX_DATA_LENGTH 255             ///< 最大数据包长度 (255 数据 + 1 校验 = 256 字节，总包 262 字节)
 #define DEVICE_CORE_BUZZER_CTRL 0x0005U ///< 蜂鸣器控制命令字
@@ -81,6 +85,40 @@ static bool is_slave_core_running() {
   return strcmp(buf, "running") == 0;
 }
 
+static std::string find_active_rpmsg_device() {
+  glob_t glob_result;
+  memset(&glob_result, 0, sizeof(glob_result));
+  // 匹配所有 /dev/rpmsg[0-9]*，排除 /dev/rpmsg_ctrl0
+  int return_value = glob("/dev/rpmsg[0-9]*", 0, NULL, &glob_result);
+  if (return_value != 0) {
+    globfree(&glob_result);
+    return "/dev/rpmsg0"; // 默认回退
+  }
+  
+  std::vector<std::string> devices;
+  for (size_t i = 0; i < glob_result.gl_pathc; ++i) {
+    devices.push_back(glob_result.gl_pathv[i]);
+  }
+  globfree(&glob_result);
+  
+  if (devices.empty()) {
+    return "/dev/rpmsg0";
+  }
+  
+  // 提取后缀数字并排序，选择数字最大的那一个（即最新注册的活动通信信道）
+  std::sort(devices.begin(), devices.end(), [](const std::string& a, const std::string& b) {
+    int num_a = -1;
+    int num_b = -1;
+    sscanf(a.c_str(), "/dev/rpmsg%d", &num_a);
+    sscanf(b.c_str(), "/dev/rpmsg%d", &num_b);
+    return num_a < num_b;
+  });
+  
+  printf("🔎 [RPMsg] 发现多个端点，自动选择当前活动节点: %s\n", devices.back().c_str());
+  fflush(stdout);
+  return devices.back();
+}
+
 RPMsgController::RPMsgController()
     : rpmsg_fd(-1), is_connected(false), is_buzzer_on(false), heartbeat_running(false) {}
 
@@ -115,8 +153,9 @@ bool RPMsgController::init() {
 
   if (ioctl(ctrl_fd, RPMSG_CREATE_EPT_IOCTL, &eptinfo) == 0) {
     // 带有重试和微延迟的打开逻辑，防止 udev 权限异步修改的竞争风险
+    std::string active_dev = find_active_rpmsg_device();
     for (int retry = 0; retry < 10; ++retry) {
-      rpmsg_fd = open("/dev/rpmsg0", O_RDWR | O_NONBLOCK);
+      rpmsg_fd = open(active_dev.c_str(), O_RDWR | O_NONBLOCK);
       if (rpmsg_fd > 0) {
         break;
       }
@@ -124,7 +163,7 @@ bool RPMsgController::init() {
     }
     if (rpmsg_fd > 0) {
       is_connected = true;
-      printf("🔌 [RPMsg] 成功打通从核通信节点 /dev/rpmsg0！\n");
+      printf("🔌 [RPMsg] 成功打通从核通信节点 %s！\n", active_dev.c_str());
 
       // 默认拉高测试引脚 GPIO4_13 (1)
       write_gpio_gpiod(1);
@@ -198,8 +237,6 @@ void RPMsgController::trigger_crc_test() {
           fflush(stdout);
           return;
         } else {
-          printf("🚨 [RPMsg TX] CRC 测试包发送失败 (errno=%d, %s)，连接断开！\n", errno, strerror(errno));
-          fflush(stdout);
           is_connected = false;
           int fd_to_close = rpmsg_fd.exchange(-1);
           if (fd_to_close > 0) {
@@ -306,13 +343,14 @@ void RPMsgController::rx_task() {
         close(ctrl_fd);
       }
       
-      int new_fd = open("/dev/rpmsg0", O_RDWR | O_NONBLOCK);
+      std::string active_dev = find_active_rpmsg_device();
+      int new_fd = open(active_dev.c_str(), O_RDWR | O_NONBLOCK);
       if (new_fd > 0) {
         rpmsg_fd = new_fd;
         is_connected = true;
         pfd.fd = new_fd;
         pfd.events = POLLIN;
-        printf("🔌 [RPMsg RX] 成功重新打通从核通信节点 /dev/rpmsg0！\n");
+        printf("🔌 [RPMsg RX] 成功重新打通从核通信节点 %s！\n", active_dev.c_str());
         fflush(stdout);
       } else {
         std::this_thread::sleep_for(std::chrono::seconds(1)); // 1秒后重试

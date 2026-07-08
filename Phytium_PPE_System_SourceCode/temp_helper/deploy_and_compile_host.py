@@ -19,7 +19,8 @@ def main():
         ("ppe_system/src/camera_node.cpp", "/home/user/Phytium_PPE_System_SourceCode/ppe_system/src/camera_node.cpp"),
         ("ppe_system/src/rpmsg_node.cpp", "/home/user/Phytium_PPE_System_SourceCode/ppe_system/src/rpmsg_node.cpp"),
         ("ppe_system/include/rpmsg_node.hpp", "/home/user/Phytium_PPE_System_SourceCode/ppe_system/include/rpmsg_node.hpp"),
-        ("ppe_system/src/inference_node.cpp", "/home/user/Phytium_PPE_System_SourceCode/ppe_system/src/inference_node.cpp")
+        ("ppe_system/src/inference_node.cpp", "/home/user/Phytium_PPE_System_SourceCode/ppe_system/src/inference_node.cpp"),
+        ("ppe_system/scripts/pull_model.sh", "/home/user/Phytium_PPE_System_SourceCode/ppe_system/scripts/pull_model.sh")
     ]
     
     print(f"Connecting to SSH {host}:{port}...")
