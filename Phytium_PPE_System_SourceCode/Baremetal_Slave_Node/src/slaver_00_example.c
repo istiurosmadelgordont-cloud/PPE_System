@@ -297,7 +297,7 @@ static int rpmsg_endpoint_cb(struct rpmsg_endpoint *ept, void *data, size_t len,
 static void rpmsg_service_unbind(struct rpmsg_endpoint *ept)
 {
     (void)ept;
-    SLAVE_DEBUG_E("[ALERT] Unexpected remote endpoint destroy! Entering Fail-Safe mode.\r\n");
+    printf("cpu3: [ALERT] Unexpected remote endpoint destroy! Entering Fail-Safe mode.\r\n");
     
     // 缩短看门狗超时时间到 1s，并立即刷新以装载新值，准备冷重启
     if (g_wdt_ctrl.is_ready)
@@ -307,7 +307,7 @@ static void rpmsg_service_unbind(struct rpmsg_endpoint *ept)
     }
     
     // 进入自愈死循环等待看门狗复位
-    SLAVE_DEBUG_E("Watchdog kick stopped. System will cold reset in 1s...\r\n");
+    printf("cpu3: Watchdog kick stopped. System will cold reset in 1s...\r\n");
     while (1)
     {
         // 挂起忙等，停止一切喂狗
@@ -324,7 +324,7 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
                            rpmsg_endpoint_cb, rpmsg_service_unbind);
     if (ret) return -1;
 
-    SLAVE_DEBUG_I("Successfully created rpmsg endpoint.\r\n");
+    printf("\r\n=== PPE Slave Core v2.1 (heartbeat_threshold=4, 2s) READY ===\r\n");
 
     /* 暴露通信端点给全局仲裁器 */
     g_ept = &lept;
@@ -346,23 +346,25 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
 
     while (1)
     {
-        platform_poll(priv);
+        platform_poll_nonblocking(priv);
+        fsleep_millisec(10); // 避免空转烧CPU，同时保证心跳检测不被阻塞
         
         u64 current_tick = GenericTimerRead(GENERIC_TIMER_ID0);
         if (current_tick - last_tick >= period)
         {
             last_tick = current_tick;
 
-            // 心跳丢失判定 (20 次 * 500ms = 10s)
+            // 心跳丢失判定 (4 次 * 500ms = 2s)
             if (!g_fail_safe_active && g_wdt_started)
             {
                 if (g_has_received_first_heartbeat)
                 {
                     g_heartbeat_miss_count++;
-                    if (g_heartbeat_miss_count >= 20)
+                    printf("cpu3: heartbeat_miss=%lu/4\r\n", (unsigned long)g_heartbeat_miss_count);
+                    if (g_heartbeat_miss_count >= 4)
                     {
                         g_fail_safe_active = true;
-                        SLAVE_DEBUG_E("[ALERT] Master Core Link Loss! Entering Fail-Safe mode.\r\n");
+                        printf("cpu3: [ALERT] Master Core Link Loss! Entering Fail-Safe mode.\r\n");
                         
                         // 缩短看门狗超时时间到 1s，并立即刷新以装载新值，准备冷重启
                         if (g_wdt_ctrl.is_ready)
@@ -372,7 +374,7 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
                         }
                         
                         // 进入自愈死循环等待看门狗复位
-                        SLAVE_DEBUG_E("Watchdog kick stopped. System will cold reset in 1s...\r\n");
+                        printf("cpu3: Watchdog kick stopped. System will cold reset in 1s...\r\n");
                         while (1)
                         {
                             // 挂起忙等，停止一切喂狗

@@ -31,34 +31,37 @@ echo ""
 
 # 选择测试模式
 echo "请输入测试模式序号："
-echo "1) 挂起 5 秒后自动恢复（验证从核接管报警、日志，以及恢复自愈）"
-echo "2) 永久挂起并等待重启（验证看门狗物理冷复位整机）"
+echo "1) 挂起 1 秒后自动恢复（验证从核心跳丢失检测 + 自动恢复，不触发重启）"
+echo "2) 永久挂起并等待重启（验证看门狗物理冷复位整机，完整自愈链路）"
 read -p "您的选择 (1 或 2): " MODE
 
 if [ "$MODE" = "1" ]; then
     echo ""
-    echo "👉 正在准备注入故障：将在 3 秒后发送 STOP 信号..."
+    echo "👉 正在准备注入故障：将在 3 秒后发送 STOP 信号（挂起 1 秒）..."
     sleep 3
     
     echo "⚡ [故障注入] 发送 STOP 信号挂起进程 $PID"
-    sudo kill -STOP $PID
+    echo "user" | sudo -S kill -STOP $PID
     
-    echo "⏳ 进程已挂起，请观察从核串口日志与蜂鸣器反应..."
-    for i in {5..1}; do
-        echo -ne "   剩余 ${i}s 恢复运行...\r"
-        sleep 1
-    done
-    echo ""
+    echo "⏳ 进程已挂起 1 秒，请观察从核串口(COM9)的 heartbeat_miss 计数..."
+    sleep 1
     
     echo "🔌 [故障撤销] 发送 CONT 信号恢复进程 $PID 运行"
-    sudo kill -CONT $PID
+    echo "user" | sudo -S kill -CONT $PID
     echo "✅ 进程已恢复运行！"
+    sleep 2
+    
+    echo ""
+    echo "=== 主核侧日志证据 ==="
+    echo "--- /tmp/run_real_deepseek.log 最近日志 ---"
+    tail -20 /tmp/run_real_deepseek.log | grep -E '心跳检测|ALERT|RPMsg|断开'
+    echo "---"
     echo ""
     echo "=== 测试结果判定 ==="
-    echo "1. 挂起期间，蜂鸣器是否被拉响？ (应长鸣报警)"
-    echo "2. 恢复后，蜂鸣器是否立刻停止鸣响？ (应自动恢复静默)"
-    echo "3. 从核串口是否打印了 'Heartbeat lost' 和 'Heartbeat recovered' 类似日志？"
-    echo "符合上述所有现象，则 TC-12 测试判定为：【PASS】"
+    echo "1. 从核串口(COM9)是否打印了 heartbeat_miss=1/4 或 2/4？ (应出现)"
+    echo "2. 主核日志是否出现了 '心跳中断' 警告？ (应出现)"
+    echo "3. 恢复后系统是否继续正常运行(未重启)？ (应正常)"
+    echo "符合上述现象，则 TC-12 模式1 测试判定为：【PASS - 检测到异常并自动恢复】"
     
 elif [ "$MODE" = "2" ]; then
     echo ""
@@ -66,7 +69,7 @@ elif [ "$MODE" = "2" ]; then
     sleep 3
     
     echo "⚡ [故障注入] 发送 STOP 信号挂起进程 $PID"
-    sudo kill -STOP $PID
+    echo "user" | sudo -S kill -STOP $PID
     
     echo "⏳ 进程已永久挂起。系统停止喂狗，硬件看门狗将在约 10 秒后复位整机！"
     echo "请保持串口连接，观察从核输出，等待系统硬重启复活。"

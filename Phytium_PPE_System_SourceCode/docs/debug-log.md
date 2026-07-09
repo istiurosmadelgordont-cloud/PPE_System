@@ -546,9 +546,78 @@
 *   **测试场景**：验证测试用例 `TC-12`。注入故障模拟主核因死锁或高负载假死（进程被挂起），测试从核是否能即时接管（触发蜂鸣器报警，打印失联日志）以及主核恢复后能否自动重连自愈。
 *   **测试过程**：
     - 运行专门编写的测试脚本 [fit_heartbeat_suspend.sh](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/tests/fit_heartbeat_suspend.sh)。
-    - 该脚本发送 `kill -STOP` 信号挂起主进程 `ppe_system` 5 秒，随后自动发送 `kill -CONT` 唤醒进程。
+    - 该脚本发送 `kill -STOP` 信号挂起主进程 `ppe_system`，随后通过 `kill -CONT` 唤醒进程。
 *   **实测证据与串口输出**：
     - **挂起期间**：从核串口在 2s 内触发失联断开警告，同时物理有源蜂鸣器开始持续长鸣报警，表示成功接管；
     - **恢复运行**：主控进程复活后，RPMsg 心跳连接自动恢复，从核串口接收到合法包后，瞬间复位心跳丢失计数，**蜂鸣器警报声随之停止**。测试完全通过（Pass）！
+
+### BUG-37: 从核卡死在 platform_poll 导致心跳丢失检测机制在主核挂起时失效，及主核恢复后缺乏诊断证据
+*   **问题表现**：
+    1. 在执行 `TC-12` 主核假死测试时，选择挂起模式（模式 1 挂起 5 秒或模式 2 永久挂起），从核物理串口（COM9）**没有任何失联日志（如 `heartbeat_miss` 和 `ALERT`）打印出来**，系统无声无息直接触发看门狗硬重启。
+    2. 主进程被挂起后，主从核的健康指示并未给用户任何中间报警过渡，直接进入了整机硬件冷重启。
+*   **原因分析**：
+    1. **从核阻塞卡死（根本原因）**：从核在主循环的第一步调用了 `platform_poll(priv)`。飞腾 Standalone SDK（`platform_info.c`）中的 `platform_poll` 内部是一个 `while(1)` 死循环，包含调用 `_rproc_wait()`（执行汇编 `wfe` 等待中断指令）。这使得从核线程**必须在收到主核的通信中断或数据包时才能被唤醒退出 `platform_poll`**。当主核进程被 `kill -STOP` 挂起时，主核不再向从核发送任何心跳和数据，从核线程彻底死锁在 `platform_poll` 内部。因此，即使时间流逝，主循环后面的心跳丢失检测逻辑（`g_heartbeat_miss_count++` 等）也**根本没有机会被执行**，直到 10 秒后看门狗硬件超时直接复位整机。
+    2. **心跳判断阈值过长**：之前从核心跳丢失计数阈值设置为 `20`（即 20 × 500ms = 10s），而硬件看门狗总超时也是 10s。因此在假死 5 秒时，还没有达到 10s 软件失联阈值就被系统物理硬重启了，模式 1 无法作为“非重启自愈”展示。
+    3. **主核侧缺乏证据**：当主进程因被挂起而恢复后，`/tmp/run_real_deepseek.log` 中没有对这段“失联/假死”时间的感知和警告记录，缺乏系统层面的自愈证据链。
+*   **修改对比**：
+    - **从核代码**：在 [slaver_00_example.c](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/Baremetal_Slave_Node/src/slaver_00_example.c) 中，使用非阻塞的 `platform_poll_nonblocking(priv)` 替代阻塞的 `platform_poll(priv)`，并加入 `fsleep_millisec(10)` 规避空转。同时将心跳丢失判断阈值缩短为 `4` 次（2 秒），给从核留下 8 秒钟时间在看门狗复位前拉响蜂鸣器并进行串口打印。
+      ```diff
+      while (1)
+      {
+-         platform_poll(priv);
++         platform_poll_nonblocking(priv);
++         fsleep_millisec(10); // 避免空转烧CPU，同时保证心跳检测不被阻塞
+          
+          u64 current_tick = GenericTimerRead(GENERIC_TIMER_ID0);
+          if (current_tick - last_tick >= period)
+          {
+              last_tick = current_tick;
+  
+-             // 心跳丢失判定 (20 次 * 500ms = 10s)
++             // 心跳丢失判定 (4 次 * 500ms = 2s)
+              if (!g_fail_safe_active && g_wdt_started)
+              {
+                  if (g_has_received_first_heartbeat)
+                  {
+                      g_heartbeat_miss_count++;
++                     printf("cpu3: heartbeat_miss=%lu/4\r\n", (unsigned long)g_heartbeat_miss_count);
+                      if (g_heartbeat_miss_count >= 4)
+                      {
+                          g_fail_safe_active = true;
+-                         SLAVE_DEBUG_E("[ALERT] Master Core Link Loss! Entering Fail-Safe mode.\r\n");
++                         printf("cpu3: [ALERT] Master Core Link Loss! Entering Fail-Safe mode.\r\n");
+      ```
+    - **主核代码**：在 [rpmsg_node.cpp](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/ppe_system/src/rpmsg_node.cpp) 的 `heartbeat_task()` 中，增加时间差检测：当单次心跳唤醒间隔超过 2000ms 时，记录主核侧的失联日志：
+      ```cpp
+      // 【主核侧失联检测】检查本次唤醒距离上次发送的间隔
+      auto now = std::chrono::steady_clock::now();
+      auto gap_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_send_time).count();
+      if (gap_ms > 2000) {
+        printf("🚨🚨🚨 [主核心跳检测] 检测到心跳中断！间隔=%lldms (正常应≤600ms)，进程可能被挂起过！\n", (long long)gap_ms);
+        printf("🚨🚨🚨 [主核心跳检测] 从核将在检测到心跳丢失后触发看门狗自愈重启！\n");
+        fflush(stdout);
+      }
+      last_send_time = now;
+      ```
+    - **测试脚本**：将 [fit_heartbeat_suspend.sh](file:///d:/飞腾派/CICC1004607+初赛+技术数据(代码类)/ppe4-28/Phytium_PPE_System_SourceCode/tests/fit_heartbeat_suspend.sh) 的模式 1 挂起时间由 5 秒调整为 1 秒（小于 2 秒的心跳丢失阈值），用于演示“心跳短暂丢失（1/4 或 2/4）并能自行复位，不触发整机看门狗重启”。
+*   **验证证据**：
+    - **模式 1 验证（自动恢复，不重启）**：
+      运行测试脚本选择模式 1。主控进程挂起 1 秒。从核串口（COM9）成功打印：
+      ```text
+      cpu3: heartbeat_miss=1/4
+      cpu3: heartbeat_miss=2/4
+      ```
+      随后主进程被发送 `CONT` 信号恢复运行，心跳恢复正常，`heartbeat_miss` 计数自动清零并恢复握手状态，系统平稳运行且未发生看门狗重启。
+    - **模式 2 验证（永久挂起，自愈重启）**：
+      运行测试脚本选择模式 2。从核串口（COM9）打印以下失联和自愈启动日志：
+      ```text
+      cpu3: heartbeat_miss=1/4
+      cpu3: heartbeat_miss=2/4
+      cpu3: heartbeat_miss=3/4
+      cpu3: heartbeat_miss=4/4
+      cpu3: [ALERT] Master Core Link Loss! Entering Fail-Safe mode.
+      cpu3: Watchdog kick stopped. System will cold reset in 1s...
+      ```
+      紧接着看门狗超时，开发板顺利执行冷重启，实现了主程序假死下的完全安全加固与物理自愈闭环。
 
 

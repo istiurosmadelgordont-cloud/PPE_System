@@ -530,10 +530,22 @@ void RPMsgController::heartbeat_task() {
   pkt.command = DEVICE_CORE_CHECK;
   pkt.length = 0;
 
+  auto last_send_time = std::chrono::steady_clock::now();
+
   while (heartbeat_running) {
     // 每 500ms 发送一次心跳包
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     
+    // 【主核侧失联检测】检查本次唤醒距离上次发送的间隔
+    auto now = std::chrono::steady_clock::now();
+    auto gap_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_send_time).count();
+    if (gap_ms > 2000) {
+      printf("🚨🚨🚨 [主核心跳检测] 检测到心跳中断！间隔=%lldms (正常应≤600ms)，进程可能被挂起过！\n", (long long)gap_ms);
+      printf("🚨🚨🚨 [主核心跳检测] 从核将在检测到心跳丢失后触发看门狗自愈重启！\n");
+      fflush(stdout);
+    }
+    last_send_time = now;
+
     std::lock_guard<std::mutex> lock(mtx);
     if (is_connected && rpmsg_fd > 0) {
       // 【Bug修复】必须发送完整 sizeof(data_packet) 字节，CRC 在结构体末尾
