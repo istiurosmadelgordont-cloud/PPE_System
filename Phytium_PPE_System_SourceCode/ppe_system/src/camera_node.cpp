@@ -84,9 +84,7 @@ void camera_thread_func() {
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_frame_time).count();
         if (elapsed >= 3) {
-          printf("🚨 [Camera Fallback] 摄像头打开失败超时，自动降级切换至本地测试视频源...\n");
-          video_path = "/home/user/test2.mp4";
-          current_source_mode = 1;
+          printf("🚨 [Camera Retry] 摄像头打开失败超时，正在尝试重新连接物理摄像头...\n");
           source_changed = true;
           last_frame_time = now;
           continue;
@@ -111,9 +109,7 @@ void camera_thread_func() {
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_frame_time).count();
         if (elapsed >= 3) {
-          printf("🚨 [Camera Fallback] 视频流读取连续超时 3 秒，自动降级切换至本地测试视频源...\n");
-          video_path = "/home/user/test2.mp4";
-          current_source_mode = 1;
+          printf("🚨 [Camera Retry] 视频流读取连续超时 3 秒，正在尝试重新连接物理摄像头...\n");
           source_changed = true;
           last_frame_time = now;
           continue;

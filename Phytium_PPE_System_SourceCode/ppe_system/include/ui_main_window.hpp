@@ -10,11 +10,15 @@
 
 #pragma once
 #include <QFrame>
+#include <QScrollArea>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QGraphicsDropShadowEffect>
+#include <chrono>
 #include <QHeaderView>
 #include <QImage>
 #include <QLabel>
+#include <QTextBrowser>
 #include <QMainWindow>
 #include <QPainter>
 #include <QPixmap>
@@ -119,7 +123,7 @@ private:
   QLabel *videoLabel;
 
   // --- 中间 DeepSeek ---
-  QLabel *dsContent;
+  QTextBrowser *dsContent;
 
   // --- 右侧数据矩阵 ---
   // 1. 传感数据
@@ -186,4 +190,7 @@ private:
   bool m_gasAlerted = false;
   bool m_tempHumidAlerted = false;
   bool m_aiAlerted = false;
+
+  // 摄像头帧时间戳，用于判定摄像头是否在线
+  std::chrono::steady_clock::time_point m_lastFrameTime;
 };
