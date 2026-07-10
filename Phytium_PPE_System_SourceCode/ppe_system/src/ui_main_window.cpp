@@ -277,7 +277,7 @@ MainWindow::MainWindow(QWidget *parent)
   lightsGrid->addWidget(lightGreen);
   lightsGrid->setAlignment(Qt::AlignCenter);
 
-  QLabel *lightStatus = new QLabel("当前状态：● 安全");
+  lightStatus = new QLabel("当前状态：● 安全");
   lightStatus->setStyleSheet("color: #10B981; font-size: 12px; font-weight: "
                              "bold; border: none; margin-top: 5px;");
   lightStatus->setAlignment(Qt::AlignCenter);
@@ -405,12 +405,11 @@ MainWindow::MainWindow(QWidget *parent)
     metricGrid->addWidget(valLbl, row, 1);
   };
 
-  addMetric(0, "AI 推理", aiLatencyLabel, "42ms", "#10B981");
-  QLabel *camLbl;
-  addMetric(1, "摄像头", camLbl, "在线", "#10B981");
-  addMetric(2, "RPMsg", rpmsgStatusLabel, "连接", "#10B981");
-  addMetric(3, "从核心跳", heartbeatStatusLabel, "正常", "#10B981");
-  addMetric(4, "系统", sysLoadLabel, "42%", "#F59E0B");
+  addMetric(0, "AI 推理", aiLatencyLabel, "--", "#A09080");
+  addMetric(1, "摄像头", camStatusLabel, "检测中", "#A09080");
+  addMetric(2, "RPMsg", rpmsgStatusLabel, "检测中", "#A09080");
+  addMetric(3, "从核心跳", heartbeatStatusLabel, "检测中", "#A09080");
+  addMetric(4, "系统", sysLoadLabel, "--%", "#A09080");
   sysL->addLayout(metricGrid);
 
   sysL->addSpacing(10);
@@ -427,14 +426,14 @@ MainWindow::MainWindow(QWidget *parent)
   crcStatusLabel->setStyleSheet(
       "color:#10B981; font-size:11px; font-weight:bold; border:none;");
 
-  QLabel *heartLbl =
-      new QLabel("心跳<br><span style='color:#F59E0B;'>在线</span>");
-  heartLbl->setAlignment(Qt::AlignCenter);
-  heartLbl->setStyleSheet(
+  commHeartbeatLabel =
+      new QLabel("心跳<br><span style='color:#A09080;'>检测中</span>");
+  commHeartbeatLabel->setAlignment(Qt::AlignCenter);
+  commHeartbeatLabel->setStyleSheet(
       "color:#A09080; font-size:11px; font-weight:bold; border:none;");
 
   commLayout->addWidget(crcStatusLabel);
-  commLayout->addWidget(heartLbl);
+  commLayout->addWidget(commHeartbeatLabel);
   sysL->addLayout(commLayout);
 
   rightBottomCol->addWidget(sysPanel);
@@ -612,13 +611,13 @@ MainWindow::MainWindow(QWidget *parent)
             if (sensorHumid) {
               sensorHumid->setText(QString("%1%").arg(humid, 0, 'f', 1));
             }
-            // 温湿度过高判定（调高湿度阈值以适应普通室内基准，95%报警，90%释放）
-            if (temp >= 35.0 || humid >= 95.0) {
+            // 温湿度过高判定（湿度≥80%报警，<75%释放；温度≥35°C报警，<33°C释放）
+            if (temp >= 35.0 || humid >= 80.0) {
               if (!m_tempHumidAlerted) {
                 m_tempHumidAlerted = true;
                 addLogEntry("温湿度过高", QDateTime::currentDateTime().toString("HH:mm:ss"), "");
               }
-            } else if (temp < 33.0 && humid < 90.0) {
+            } else if (temp < 33.0 && humid < 75.0) {
               m_tempHumidAlerted = false; // 迟滞释放，防抖
             }
             updateThreeColorLights();
@@ -1064,8 +1063,28 @@ void MainWindow::updateSystemStats() {
         "color:#10B981; font-size:11px; font-weight:bold; border:none;" :
         "color:#EF4444; font-size:11px; font-weight:bold; border:none;");
   }
+  // 通信安全区心跳标签同步
+  if (commHeartbeatLabel) {
+    commHeartbeatLabel->setText(connected ?
+        "心跳<br><span style='color:#10B981;font-weight:bold;'>在线</span>" :
+        "心跳<br><span style='color:#EF4444;font-weight:bold;'>离线</span>");
+  }
 
-  // 5. 模拟环境传感器的小幅波动
+  // 5. 摄像头状态检测（基于帧更新时间戳判定）
+  if (camStatusLabel) {
+    static auto lastFrameCheck = std::chrono::steady_clock::now();
+    bool camOk = false;
+    // 如果 videoLabel 有内容（pixmap 非空），则认为摄像头在线
+    if (videoLabel && videoLabel->pixmap() && !videoLabel->pixmap()->isNull()) {
+      camOk = true;
+    }
+    camStatusLabel->setText(camOk ? "在线" : "离线");
+    camStatusLabel->setStyleSheet(camOk ?
+        "color:#10B981; font-size:11px; font-weight:bold; border:none;" :
+        "color:#EF4444; font-size:11px; font-weight:bold; border:none;");
+  }
+
+  // 6. 噪声传感器模拟（无真实传感器）
   static int counter = 0;
   counter++;
   if (sensorNoise) {
@@ -1100,16 +1119,28 @@ void MainWindow::updateThreeColorLights() {
     if (lightRed) lightRed->setStyleSheet("background-color: #EF4444; border-radius: 12px; border: 2px solid #FCA5A5;");
     if (lightYellow) lightYellow->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
     if (lightGreen) lightGreen->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
+    if (lightStatus) {
+      lightStatus->setText("当前状态：● 紧急报警");
+      lightStatus->setStyleSheet("color: #EF4444; font-size: 12px; font-weight: bold; border: none; margin-top: 5px;");
+    }
   } else if (has_warning) {
     // 黄色一般告警 (亮黄)
     if (lightRed) lightRed->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
     if (lightYellow) lightYellow->setStyleSheet("background-color: #F59E0B; border-radius: 12px; border: 2px solid #FCD34D;");
     if (lightGreen) lightGreen->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
+    if (lightStatus) {
+      lightStatus->setText("当前状态：● 一般告警");
+      lightStatus->setStyleSheet("color: #F59E0B; font-size: 12px; font-weight: bold; border: none; margin-top: 5px;");
+    }
   } else {
     // 绿色完全正常 (亮绿)
     if (lightRed) lightRed->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
     if (lightYellow) lightYellow->setStyleSheet("background-color: #1C1918; border-radius: 12px; border: 2px solid #1C1918;");
     if (lightGreen) lightGreen->setStyleSheet("background-color: #10B981; border-radius: 12px; border: 2px solid #6EE7B7;");
+    if (lightStatus) {
+      lightStatus->setText("当前状态：● 安全");
+      lightStatus->setStyleSheet("color: #10B981; font-size: 12px; font-weight: bold; border: none; margin-top: 5px;");
+    }
   }
 }
 

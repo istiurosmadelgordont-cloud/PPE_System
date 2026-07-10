@@ -324,7 +324,7 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
                            rpmsg_endpoint_cb, rpmsg_service_unbind);
     if (ret) return -1;
 
-    printf("\r\n=== PPE Slave Core v2.1 (heartbeat_threshold=4, 2s) READY ===\r\n");
+    printf("\r\n=== PPE Slave Core v2.2 (heartbeat_threshold=10, 5s) READY ===\r\n");
 
     /* 暴露通信端点给全局仲裁器 */
     g_ept = &lept;
@@ -354,14 +354,14 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
         {
             last_tick = current_tick;
 
-            // 心跳丢失判定 (4 次 * 500ms = 2s)
+            // 心跳丢失判定 (10 次 * 500ms = 5s)
             if (!g_fail_safe_active && g_wdt_started)
             {
                 if (g_has_received_first_heartbeat)
                 {
                     g_heartbeat_miss_count++;
-                    printf("cpu3: heartbeat_miss=%lu/4\r\n", (unsigned long)g_heartbeat_miss_count);
-                    if (g_heartbeat_miss_count >= 4)
+                    printf("cpu3: heartbeat_miss=%lu/10\r\n", (unsigned long)g_heartbeat_miss_count);
+                    if (g_heartbeat_miss_count >= 10)
                     {
                         g_fail_safe_active = true;
                         printf("cpu3: [ALERT] Master Core Link Loss! Entering Fail-Safe mode.\r\n");

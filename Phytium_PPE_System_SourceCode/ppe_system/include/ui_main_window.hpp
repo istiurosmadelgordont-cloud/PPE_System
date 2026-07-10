@@ -135,6 +135,7 @@ private:
   QLabel *lightRed;
   QLabel *lightYellow;
   QLabel *lightGreen;
+  QLabel *lightStatus;
 
   // 3. 报警日志
   QTableWidget *logTable;
@@ -153,9 +154,11 @@ private:
   QLabel *lblGloveCnt;
 
   QLabel *aiLatencyLabel;
+  QLabel *camStatusLabel;
   QLabel *rpmsgStatusLabel;
   QLabel *crcStatusLabel;
   QLabel *heartbeatStatusLabel;
+  QLabel *commHeartbeatLabel;
   QLabel *sysLoadLabel;
 
   // 控制按钮

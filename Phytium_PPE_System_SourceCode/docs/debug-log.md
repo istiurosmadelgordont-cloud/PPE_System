@@ -620,4 +620,43 @@
       ```
       紧接着看门狗超时，开发板顺利执行冷重启，实现了主程序假死下的完全安全加固与物理自愈闭环。
 
+### BUG-38: USB摄像头热拔插导致SD卡I/O错误引起内核短暂挂起触发从核看门狗意外重启
+*   **测试场景**：拔出 USB 摄像头时，开发板直接发生整机冷重启。
+*   **排查思路与根本原因**：
+    1. 查看从核串口（COM9）的崩溃现场日志：
+       ```text
+       [ 2960.090414] mmcblk0: recovery failed!
+       [ 2960.094105] I/O error, dev mmcblk0, sector 3106584 op 0x0:(READ) flags 0x80700 phys_seg 32 prio class 2
+       [ 2960.112324] I/O error, dev mmcblk0, sector 3106712 op 0x0:(READ) flags 0x0 phys_seg 1 prio class 2
+       cpu3: heartbeat_miss=1/4
+       cpu3: heartbeat_miss=2/4
+       cpu3: heartbeat_miss=3/4
+       cpu3: heartbeat_miss=4/4
+       cpu3: [ALERT] Master Core Link Loss! Entering Fail-Safe mode.
+       cpu3: Watchdog kick stopped. System will cold reset in 1s...
+       ```
+    2. 分析表明，USB 摄像头热拔出时产生的**瞬态电压波动/拉低**导致飞腾派 SD 卡控制器出现 I/O 故障，引起 Linux 内核短暂卡死/挂起（持续 2-3 秒）。
+    3. 此时，主核的心跳线程由于内核文件系统/调度暂停而被阻塞，无法继续发送 RPMsg 心跳包。
+    4. 从核先前配置的失联阈值仅为 **2 秒** (4 次 * 500ms)，此时误判为主进程卡死并停止喂狗，最终导致整机被看门狗硬复位重启。
+*   **解决方案**：
+    1. **延长心跳丢失阈值**：将从核检测主核的心跳丢失次数从 `4次（2秒）` 调大至 `10次（5秒）`。5 秒的容错时间既能给 Linux 内核从热拔插 I/O 错误中恢复的足够时间，又能保证在主进程真正死亡/死锁时依然能够执行安全的看门狗硬重启。
+    2. **板端交叉编译适配**：在使用 standalone SDK 编译从核裸机程序时，通过指定 `TOOL_CHAIN_PREFIX=aarch64-linux-gnu-`，从而在飞腾 Linux 开发板本地利用系统预装的 aarch64 交叉编译器一键生成并部署从核 elf 文件。
+    3. 从核代码修改对比：
+       ```diff
+       -    printf("\r\n=== PPE Slave Core v2.1 (heartbeat_threshold=4, 2s) READY ===\r\n");
+       +    printf("\r\n=== PPE Slave Core v2.2 (heartbeat_threshold=10, 5s) READY ===\r\n");
+       ...
+       -            // 心跳丢失判定 (4 次 * 500ms = 2s)
+       +            // 心跳丢失判定 (10 次 * 500ms = 5s)
+       ...
+       -                    printf("cpu3: heartbeat_miss=%lu/4\r\n", (unsigned long)g_heartbeat_miss_count);
+       -                    if (g_heartbeat_miss_count >= 4)
+       +                    printf("cpu3: heartbeat_miss=%lu/10\r\n", (unsigned long)g_heartbeat_miss_count);
+       +                    if (g_heartbeat_miss_count >= 10)
+       ```
+*   **实测验证**：
+    1. 使用 `/home/user/Phytium_PPE_System_SourceCode/temp_helper/compile_and_deploy.py` 一键编译并重启从核。
+    2. 重启后拔掉 USB 摄像头，串口显示 `heartbeat_miss` 上升至 `2/10` 或 `3/10`，但在 SD 卡恢复读取后心跳数据包成功送达，从核将 `heartbeat_miss` **自动清零并恢复握手状态**，整个系统平稳运行，**没有再次发生意外重启**！
+
+
 
