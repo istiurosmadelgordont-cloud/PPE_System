@@ -443,6 +443,8 @@ void RPMsgController::rx_task() {
           }
         }
         else if (pkt.command == DEVICE_CORE_GAS_REPORT) {
+          printf("☁️ [RPMsg RX] 收到可燃气体上报: 状态值='%c' (0:清洁, 1:超标报警)\n", pkt.data[0]);
+          fflush(stdout);
           bool gas_alarm_raw = (pkt.data[0] == '1');
           auto now = std::chrono::steady_clock::now();
           if (gas_alarm_raw) {
