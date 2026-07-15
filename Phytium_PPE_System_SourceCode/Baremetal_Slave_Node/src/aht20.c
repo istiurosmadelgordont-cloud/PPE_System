@@ -82,6 +82,9 @@ FError AHT20_Init(void)
     if (aht20_init_ok) return FT_SUCCESS;
     if (!aht20_present) return FT_SUCCESS; // 如果之前探测到设备不存在，直接返回成功
 
+    // 如果之前已经初始化过，先进行反初始化，清除 is_ready 状态，防止被 SDK 拒绝
+    FI2cDeInitialize(&i2c_instance);
+
     FError ret;
     FI2cConfig input_cfg;
 
@@ -159,21 +162,22 @@ FError AHT20_Init(void)
 
 FError AHT20_Read_Sensor(float *temp, float *humid)
 {
-    if (!aht20_present) {
-        return FI2C_ERR_NOT_READY;
-    }
-
-    if (!aht20_init_ok) {
+    if (!aht20_present || !aht20_init_ok) {
+        aht20_present = 1; // 尝试重新探测
+        aht20_init_ok = 0;
         FError init_ret = AHT20_Init();
         if (init_ret != FT_SUCCESS) return init_ret;
         if (!aht20_present) return FI2C_ERR_NOT_READY;
     }
+
+
 
     /* 触发测量：命令 0xAC, 参数 0x33 0x00 */
     u8 trigger_param[] = {0x33, 0x00};
     FError ret = FI2cMasterWritePoll(&i2c_instance, 0xAC, 1, trigger_param, 2);
     if (ret != FT_SUCCESS) {
         printf("[AHT20] Trigger measure failed: 0x%x\r\n", ret);
+        aht20_init_ok = 0; // 强制下次重置 I2C 控制器
         return ret;
     }
 
@@ -185,6 +189,7 @@ FError AHT20_Read_Sensor(float *temp, float *humid)
     ret = FI2cMasterReadPoll(&i2c_instance, 0, 0, data, 6);
     if (ret != FT_SUCCESS) {
         printf("[AHT20] Read data failed: 0x%x\r\n", ret);
+        aht20_init_ok = 0; // 强制下次重置 I2C 控制器
         return ret;
     }
 

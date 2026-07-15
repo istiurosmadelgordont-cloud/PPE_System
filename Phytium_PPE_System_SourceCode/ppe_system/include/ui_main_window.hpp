@@ -43,13 +43,14 @@ public:
 signals:
   void sendFrame(const cv::Mat &frame);
   void sendAlarmLog(QString type, QString time, QString imgPath);
-  void sendPhysicalAlarmStatus(bool triggered);
+  void sendPhysicalAlarmStatus(int status);
   void sendAiMetrics(int latencyMs, int personCount);
-  void sendGasAlarmStatus(bool alarmed);
+  void sendGasAlarmStatus(int status);
   void sendEnvMetrics(double temp, double humid);
   void sendAiAlarmStatus(bool alarmed);
   void sendEnvError();
   void sendCrcError(int count);
+  void sendSlaveLatency(double latencyMs);
 
 private:
   SignalBridge() = default;
@@ -92,6 +93,7 @@ public slots:
   void updateFrame(const cv::Mat &frame);
   void addLogEntry(QString type, QString time, QString imgPath);
   void updateCrcError(int count);
+  void updateSlaveLatency(double latencyMs);
 
 private slots:
   void onExitClicked();
@@ -140,6 +142,11 @@ private:
   QLabel *lightYellow;
   QLabel *lightGreen;
   QLabel *lightStatus;
+
+  // 异构核心动态展示
+  QLabel *core0Label;
+  QLabel *core1Label;
+  QLabel *core23Label;
 
   // 3. 报警日志
   QTableWidget *logTable;

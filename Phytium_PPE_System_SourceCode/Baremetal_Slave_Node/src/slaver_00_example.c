@@ -41,6 +41,8 @@ extern void Buzzer_Init(void);
 extern void Buzzer_Set(int flag);
 extern void Fire_Sensor_Intr_Init(void);
 extern int Fire_Sensor_Read_Level(void);
+extern int Fire_Sensor_Read_Level_With_Detect(int *disconnected);
+extern int Gas_Sensor_Read_Level_With_Detect(int *disconnected);
 
 volatile bool flag_ai_alarm_req = false; 
 static struct rpmsg_endpoint *g_ept = NULL; /* 全局端点指针，用于主动向上级发信 */
@@ -145,8 +147,9 @@ struct remoteproc_priv slave_00_priv = {
  * 现在它安全地放在了所有声明的后面！
  * ================================================================== */
 void Execute_Alarm_Arbitration(void) {
-    int sensor_level = Fire_Sensor_Read_Level();
-    if ((sensor_level == 0) || flag_ai_alarm_req) {
+    int fire_disconnected = 0;
+    int sensor_level = Fire_Sensor_Read_Level_With_Detect(&fire_disconnected);
+    if (!fire_disconnected && ((sensor_level == 0) || flag_ai_alarm_req)) {
         Buzzer_Set(1); 
     } else {
         Buzzer_Set(0); 
@@ -157,7 +160,11 @@ void Execute_Alarm_Arbitration(void) {
         ProtocolData report;
         report.command = DEVICE_CORE_FIRE_REPORT; 
         report.length = 1;
-        report.data[0] = (sensor_level == 0) ? '1' : '0'; 
+        if (fire_disconnected) {
+            report.data[0] = '2';
+        } else {
+            report.data[0] = (sensor_level == 0) ? '1' : '0'; 
+        }
         
         char tx_buf[512];
         size_t tx_len = 0;
@@ -417,16 +424,41 @@ static int FRpmsgEchoApp(struct rpmsg_device *rdev, void *priv)
             }
             
             // 2. 读取并上报 MQ-2 可燃气体状态
-            int gas_level = Gas_Sensor_Read_Level();
+            int gas_disconnected = 0;
+            int gas_level = Gas_Sensor_Read_Level_With_Detect(&gas_disconnected);
             ProtocolData gas_pkt;
             gas_pkt.command = DEVICE_CORE_GAS_REPORT;
-            gas_pkt.data[0] = (gas_level == 1) ? '1' : '0'; // 15号引脚(P11/ADC)接Pin 13(GPIO1_12)：因为无比较器，清洁空气输出低电平0(安全)，超标高电平1(报警)
             gas_pkt.length = 1;
+            if (gas_disconnected) {
+                gas_pkt.data[0] = '2';
+            } else {
+                gas_pkt.data[0] = (gas_level == 1) ? '1' : '0';
+            }
             if (g_ept)
             {
                 char tx_buf[512];
                 size_t tx_len = 0;
                 assemble_protocol_data(&gas_pkt, tx_buf, &tx_len);
+                tx_buf[tx_len] = calculate_crc8((const uint8_t *)tx_buf, tx_len);
+                rpmsg_send(g_ept, tx_buf, tx_len + 1);
+            }
+
+            // 3. 读取并上报 火焰探头状态（补充定期自检自愈）
+            int fire_disconnected = 0;
+            int fire_level = Fire_Sensor_Read_Level_With_Detect(&fire_disconnected);
+            ProtocolData fire_pkt;
+            fire_pkt.command = DEVICE_CORE_FIRE_REPORT;
+            fire_pkt.length = 1;
+            if (fire_disconnected) {
+                fire_pkt.data[0] = '2';
+            } else {
+                fire_pkt.data[0] = (fire_level == 0) ? '1' : '0';
+            }
+            if (g_ept)
+            {
+                char tx_buf[512];
+                size_t tx_len = 0;
+                assemble_protocol_data(&fire_pkt, tx_buf, &tx_len);
                 tx_buf[tx_len] = calculate_crc8((const uint8_t *)tx_buf, tx_len);
                 rpmsg_send(g_ept, tx_buf, tx_len + 1);
             }

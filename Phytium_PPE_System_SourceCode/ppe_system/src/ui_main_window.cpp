@@ -25,6 +25,9 @@
 
 Q_DECLARE_METATYPE(cv::Mat)
 
+#include <atomic>
+static std::atomic<int64_t> g_last_frame_time_ms(0);
+
 // ==========================================
 // CircularScoreWidget Implementation
 // ==========================================
@@ -221,14 +224,14 @@ MainWindow::MainWindow(QWidget *parent)
   QGridLayout *sensorGrid = new QGridLayout();
   sensorGrid->addWidget(createSensorItem("火焰探头", sensorFlame, "#10B981"),
                         0, 0);
-  sensorGrid->addWidget(createSensorItem("有害气体", sensorGas, "#10B981"),
+  sensorGrid->addWidget(createSensorItem("可燃气体", sensorGas, "#10B981"),
                         0, 1);
   sensorGrid->addWidget(createSensorItem("温度", sensorTemp, "#F59E0B"), 0,
                         2);
   sensorGrid->addWidget(createSensorItem("湿度", sensorHumid, "#3B82F6"), 1,
                         0);
   sensorGrid->addWidget(
-      createSensorItem("人员防爆", sensorPerson, "#8B5CF6"), 1, 1);
+      createSensorItem("违规数量", sensorPerson, "#8B5CF6"), 1, 1);
   sensorGrid->addWidget(createSensorItem("噪声", sensorNoise, "#10B981"), 1,
                         2);
   sensorL->addLayout(sensorGrid);
@@ -356,7 +359,7 @@ MainWindow::MainWindow(QWidget *parent)
   QHBoxLayout *coreStatusLayout = new QHBoxLayout();
   coreStatusLayout->setSpacing(5);
   auto addCoreStatus = [&](const QString &text, const QString &status,
-                           const QString &color) {
+                           const QString &color) -> QLabel* {
     QLabel *l = new QLabel(QString("<b style='color:#1f1f1f'>%1</b><br><span "
                                    "style='color:%2'>%3</span>")
                                .arg(text, color, status));
@@ -364,10 +367,11 @@ MainWindow::MainWindow(QWidget *parent)
     l->setStyleSheet("background-color: #f0e6d2; border: 1px solid #e0d5c1; "
                      "border-radius: 4px; font-size: 13px; padding: 4px;");
     coreStatusLayout->addWidget(l);
+    return l;
   };
-  addCoreStatus("Core0", "UI+IO<br>● 38°C", "#10B981");
-  addCoreStatus("Core1", "裸机<br>● 2ms", "#EF4444");
-  addCoreStatus("Core2+3", "YOLO<br>● 84%", "#F59E0B");
+  core0Label = addCoreStatus("Core0", "UI+IO<br>● 38°C", "#10B981");
+  core1Label = addCoreStatus("Core1", "裸机<br>● 2ms", "#EF4444");
+  core23Label = addCoreStatus("Core2+3", "YOLO<br>● 84%", "#F59E0B");
   statL->addLayout(coreStatusLayout);
 
   // 4.2 右侧：系统健康 & 通信安全
@@ -526,6 +530,8 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::addLogEntry, Qt::QueuedConnection);
   connect(SignalBridge::getInstance(), &SignalBridge::sendCrcError, this,
           &MainWindow::updateCrcError, Qt::QueuedConnection);
+  connect(SignalBridge::getInstance(), &SignalBridge::sendSlaveLatency, this,
+          &MainWindow::updateSlaveLatency, Qt::QueuedConnection);
   connect(SignalBridge::getInstance(), &SignalBridge::sendAiMetrics, this,
           [this](int latencyMs, int personCount) {
             if (aiLatencyLabel) {
@@ -536,51 +542,74 @@ MainWindow::MainWindow(QWidget *parent)
             }
           },
           Qt::QueuedConnection);
-  connect(
-      SignalBridge::getInstance(), &SignalBridge::sendPhysicalAlarmStatus, this,
-      [this](bool triggered) {
-        m_fireAlerted = triggered;
-        if (triggered) {
-          headerRpmsgLabel->setText("● RPMsg 警报");
-          headerRpmsgLabel->setStyleSheet(
-              "background-color: #fa520f; color: #1f1f1f; border: 1px solid "
-              "#7F1D1D; border-radius: 14px; padding: 6px 14px; font-size: "
-              "12px; font-weight: bold;");
-          videoLabel->setStyleSheet(
-              "color: #1f1f1f; background-color: rgba(239, 68, 68, 0.15); "
-              "border: 5px solid #fa520f; font-size: 16px;");
-          sensorFlame->setText("警报");
-          sensorFlame->setStyleSheet("color: #fa520f; font-weight: bold; "
-                                     "font-size: 18px; border: none;");
-          scoreWidget->setScore(45, "危险 - 立即排查");
-        } else {
-          headerRpmsgLabel->setText("● RPMsg 正常");
-          headerRpmsgLabel->setStyleSheet(
-              "background-color: #f0e6d2; color: #1f1f1f; border: 1px solid "
-              "#4A3825; border-radius: 14px; padding: 6px 14px; font-size: "
-              "12px; font-weight: bold;");
-          videoLabel->setStyleSheet(
-              "color: #666; background-color: transparent; border: none; "
-              "font-size: 16px;");
-          sensorFlame->setText("● 安全");
-          sensorFlame->setStyleSheet("color: #10B981; font-weight: bold; "
-                                     "font-size: 18px; border: none;");
-          scoreWidget->setScore(84, "良好 - 压线40分");
-        }
-        updateThreeColorLights();
-      },
-      Qt::QueuedConnection);
+  connect(SignalBridge::getInstance(), &SignalBridge::sendPhysicalAlarmStatus,
+          this, [this](int status) {
+            if (status == 1) {
+              m_fireAlerted = true;
+            } else {
+              m_fireAlerted = false;
+            }
+            if (sensorFlame) {
+              if (status == 1) {
+                headerRpmsgLabel->setText("● 物理探头预警中");
+                headerRpmsgLabel->setStyleSheet(
+                    "background-color: #fa520f; color: #1f1f1f; border: 1px solid "
+                    "#FCA5A5; border-radius: 14px; padding: 6px 14px; font-size: "
+                    "12px; font-weight: bold;");
+                videoLabel->setStyleSheet(
+                    "color: #1f1f1f; background-color: rgba(239, 68, 68, 0.15); "
+                    "border: 5px solid #fa520f; font-size: 16px;");
+                sensorFlame->setText("警报");
+                sensorFlame->setStyleSheet("color: #fa520f; font-weight: bold; "
+                                           "font-size: 18px; border: none;");
+                scoreWidget->setScore(45, "危险 - 立即排查");
+              } else if (status == 2) {
+                sensorFlame->setText("断开");
+                sensorFlame->setStyleSheet("color: #fa520f; font-weight: bold; "
+                                           "font-size: 18px; border: none;");
+              } else {
+                headerRpmsgLabel->setText("● RPMsg 正常");
+                headerRpmsgLabel->setStyleSheet(
+                    "background-color: #f0e6d2; color: #1f1f1f; border: 1px solid "
+                    "#4A3825; border-radius: 14px; padding: 6px 14px; font-size: "
+                    "12px; font-weight: bold;");
+                videoLabel->setStyleSheet(
+                    "color: #666; background-color: transparent; border: none; "
+                    "font-size: 16px;");
+                sensorFlame->setText("● 安全");
+                sensorFlame->setStyleSheet("color: #10B981; font-weight: bold; "
+                                           "font-size: 18px; border: none;");
+                
+                // 恢复正常时，动态计算基于 AI 违规的实时得分，而不是粗暴地写死为 84 分
+                int total_violations = m_cntHelmet + m_cntVest + m_cntGoggle + m_cntSmoke + m_cntGlove;
+                int new_score = 100 - (total_violations * 5);
+                if (new_score < 0) new_score = 0;
+                QString statusText = "优秀";
+                if (new_score >= 90) statusText = "优秀";
+                else if (new_score >= 80) statusText = "良好";
+                else if (new_score >= 60) statusText = "一般";
+                else statusText = "差";
+                scoreWidget->setScore(new_score, statusText);
+              }
+            }
+            updateThreeColorLights();
+          },
+          Qt::QueuedConnection);
 
   connect(SignalBridge::getInstance(), &SignalBridge::sendGasAlarmStatus, this,
-          [this](bool alarmed) {
+          [this](int status) {
             if (sensorGas) {
-              if (alarmed) {
+              if (status == 1) {
                 sensorGas->setText("● 警报");
                 sensorGas->setStyleSheet("color: #fa520f; font-weight: bold; font-size: 18px; border: none;");
                 if (!m_gasAlerted) {
                   m_gasAlerted = true;
-                  addLogEntry("有害气体报警", QDateTime::currentDateTime().toString("HH:mm:ss"), "");
+                  addLogEntry("可燃气体报警", QDateTime::currentDateTime().toString("HH:mm:ss"), "");
                 }
+              } else if (status == 2) {
+                sensorGas->setText("断开");
+                sensorGas->setStyleSheet("color: #fa520f; font-weight: bold; font-size: 18px; border: none;");
+                m_gasAlerted = false;
               } else {
                 sensorGas->setText("● 正常");
                 sensorGas->setStyleSheet("color: #10B981; font-weight: bold; font-size: 18px; border: none;");
@@ -603,6 +632,11 @@ MainWindow::MainWindow(QWidget *parent)
             }
             if (sensorHumid) {
               sensorHumid->setText(QString("%1%").arg(humid, 0, 'f', 1));
+              if (humid >= 80.0) {
+                sensorHumid->setStyleSheet("color: #fa520f; font-weight: bold; font-size: 18px; border: none;");
+              } else {
+                sensorHumid->setStyleSheet("color: #3B82F6; font-weight: bold; font-size: 18px; border: none;");
+              }
             }
             // 温湿度过高判定（湿度≥80%报警，<75%释放；温度≥35°C报警，<33°C释放）
             if (temp >= 35.0 || humid >= 80.0) {
@@ -713,6 +747,11 @@ QProgressBar *MainWindow::createCustomProgressBar(const QString &color) {
 void MainWindow::updateFrame(const cv::Mat &frame) {
   if (frame.empty())
     return;
+
+  g_last_frame_time_ms.store(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now().time_since_epoch())
+          .count());
 
   static auto last_time = std::chrono::steady_clock::now();
   static int frames = 0;
@@ -829,7 +868,7 @@ void MainWindow::addLogEntry(QString type, QString time, QString imgPath) {
   // 触发 DeepSeek AI 安全顾问合并分析 (1.5秒缓存时间)
   if (type == "未戴安全帽" || type == "未穿背心" || type == "未戴护目镜" || 
       type == "未戴手套" || type == "抽烟报警" || type == "底层火警探头" || 
-      type == "底座火焰触发" || type == "有害气体报警" || type == "气体报警" || 
+      type == "底座火焰触发" || type == "可燃气体报警" || type == "气体报警" || 
       type == "温湿度过高") {
     m_pendingViolations.append(type);
     m_dsAggregationTimer->start(1500); // 1.5秒延迟，合并同一批或相邻帧的所有违规
@@ -954,10 +993,13 @@ void MainWindow::updateSystemStats() {
                            "font-size: 12px; font-weight: bold;";
       if (temp >= 75.0) {
         headerTempLabel->setStyleSheet(badgeStyle + "color: #fa520f;");
+        if (core0Label) core0Label->setText(QString("<b style='color:#1f1f1f'>Core0</b><br><span style='color:#EF4444'>● %1°C</span>").arg(temp, 0, 'f', 1));
       } else if (temp >= 65.0) {
         headerTempLabel->setStyleSheet(badgeStyle + "color: #d97757;");
+        if (core0Label) core0Label->setText(QString("<b style='color:#1f1f1f'>Core0</b><br><span style='color:#F59E0B'>● %1°C</span>").arg(temp, 0, 'f', 1));
       } else {
         headerTempLabel->setStyleSheet(badgeStyle + "color: #1f1f1f;");
+        if (core0Label) core0Label->setText(QString("<b style='color:#1f1f1f'>Core0</b><br><span style='color:#10B981'>● %1°C</span>").arg(temp, 0, 'f', 1));
       }
     }
     tempFile.close();
@@ -996,12 +1038,24 @@ void MainWindow::updateSystemStats() {
           QString badgeStyle = "background-color: #f0e6d2; border: 1px solid "
                                "#4A3825; border-radius: 14px; padding: 6px "
                                "14px; font-size: 12px; font-weight: bold;";
-          if (usage >= 90.0)
+          if (usage >= 90.0) {
             headerCpuLabel->setStyleSheet(badgeStyle + "color: #fa520f;");
-          else if (usage >= 70.0)
+            if (core23Label) core23Label->setText(QString("<b style='color:#1f1f1f'>Core2+3</b><br><span style='color:#EF4444'>● %1%</span>").arg(usage, 0, 'f', 0));
+          } else if (usage >= 70.0) {
             headerCpuLabel->setStyleSheet(badgeStyle + "color: #d97757;");
-          else
+            if (core23Label) core23Label->setText(QString("<b style='color:#1f1f1f'>Core2+3</b><br><span style='color:#F59E0B'>● %1%</span>").arg(usage, 0, 'f', 0));
+          } else {
             headerCpuLabel->setStyleSheet(badgeStyle + "color: #1f1f1f;");
+            if (core23Label) core23Label->setText(QString("<b style='color:#1f1f1f'>Core2+3</b><br><span style='color:#10B981'>● %1%</span>").arg(usage, 0, 'f', 0));
+          }
+        }
+        
+        // 真实 Core1 裸机延迟 (若断开连接则显示断开)
+        if (core1Label) {
+            bool connected = RPMsgController::getInstance().isConnected();
+            if (!connected) {
+                core1Label->setText("<b style='color:#1f1f1f'>Core1</b><br><span style='color:#EF4444'>● 断开</span>");
+            }
         }
         prevTotalTicks = total;
         prevIdleTicks = totalIdle;
@@ -1018,8 +1072,9 @@ void MainWindow::updateSystemStats() {
     double freeMem = 0.0;
     double buffersMem = 0.0;
     double cachedMem = 0.0;
-    while (!in.atEnd()) {
+    while (true) {
       QString line = in.readLine();
+      if (line.isNull()) break;
       QStringList parts = line.simplified().split(' ');
       if (parts.size() >= 2) {
         if (parts[0] == "MemTotal:") {
@@ -1065,16 +1120,33 @@ void MainWindow::updateSystemStats() {
 
   // 5. 摄像头状态检测（基于帧更新时间戳判定）
   if (camStatusLabel) {
-    static auto lastFrameCheck = std::chrono::steady_clock::now();
     bool camOk = false;
-    // 只有在硬件直连模式(0)且画面非空时，才认为物理摄像头在线
-    if (videoLabel && videoLabel->pixmap() && !videoLabel->pixmap()->isNull() && current_source_mode.load() == 0) {
+    int64_t last_frame_time = g_last_frame_time_ms.load();
+    int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+    
+    // 只有在最近 1.5 秒内收到过帧，且处于实时监控模式时，才认为摄像头在线
+    if (now_ms - last_frame_time < 1500 && current_source_mode.load() == 0) {
       camOk = true;
     }
     camStatusLabel->setText(camOk ? "在线" : "离线");
     camStatusLabel->setStyleSheet(camOk ?
         "color:#10B981; font-size:13px; font-weight:bold; border:none;" :
         "color:#EF4444; font-size:13px; font-weight:bold; border:none;");
+
+    // 如果摄像头掉线且处于实时监控模式，清除最后一帧画面并给出高科技感提示
+    if (!camOk && current_source_mode.load() == 0) {
+      videoLabel->setPixmap(QPixmap());
+      videoLabel->setText("🚨 摄像头已断开，正在尝试重新连接...");
+      videoLabel->setStyleSheet(
+          "QLabel { color: #fa520f; background-color: rgba(250, 82, 15, 0.1); "
+          "border: 2px dashed #fa520f; border-radius: 8px; font-size: 18px; "
+          "font-weight: bold; }");
+      videoLabel->setAlignment(Qt::AlignCenter);
+    } else if (camOk && current_source_mode.load() == 0) {
+      videoLabel->setStyleSheet("color: #666; background-color: transparent; border: none; font-size: 16px;");
+    }
   }
 
   // 6. 噪声传感器模拟（无真实传感器）
@@ -1140,5 +1212,12 @@ void MainWindow::updateThreeColorLights() {
 void MainWindow::updateCrcError(int count) {
   if (crcStatusLabel) {
     crcStatusLabel->setText(QString("CRC<br><span style='color:#EF4444;font-weight:bold;'>%1 次</span>").arg(count));
+  }
+}
+
+void MainWindow::updateSlaveLatency(double latencyMs) {
+  if (core1Label) {
+    core1Label->setText(QString("<b style='color:#1f1f1f'>Core1</b><br><span style='color:#10B981'>● %1ms</span>")
+                        .arg(latencyMs, 0, 'f', 1));
   }
 }

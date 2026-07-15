@@ -323,6 +323,9 @@ void RPMsgController::rx_task() {
   auto last_gas_time = std::chrono::steady_clock::now();
   bool is_gas_alarm = false;
 
+  int last_emitted_fire_status = -1;
+  int last_emitted_gas_status = -1;
+
   while (rx_running) {
     if (rpmsg_fd < 0) {
       // 如果从核未处于 running 状态，跳过端点创建，以防 ioctl 强行通信引发内核死锁/挂起
@@ -404,52 +407,76 @@ void RPMsgController::rx_task() {
 
         printf("[RPMsg RX] 收到数据包: 命令=0x%x, 长度=%d\n", pkt.command, pkt.length);
         fflush(stdout);
-        if (pkt.command == DEVICE_CORE_FIRE_REPORT && pkt.data[0] == '1') {
-          auto now = std::chrono::steady_clock::now();
+        if (pkt.command == DEVICE_CORE_FIRE_REPORT) {
+          char val = pkt.data[0];
+          int current_status = 0;
+          if (val == '2') {
+            is_physical_alarm = false;
+            current_status = 2;
+          } else if (val == '1') {
+            auto now = std::chrono::steady_clock::now();
 
-          // 如果已经在报警中，只需要续命（刷新最后一次火警时间）
-          if (is_physical_alarm) {
-            last_fire_time = now;
-            continue;
+            // 如果已经在报警中，只需要续命（刷新最后一次火警时间）
+            if (is_physical_alarm) {
+              last_fire_time = now;
+              current_status = 1;
+            } else {
+              // --- 尚未报警：执行计数确认逻辑 ---
+              // 如果距离第一次计数已经超过确认窗口，重新开始计数
+              auto elapsed_since_first =
+                  std::chrono::duration_cast<std::chrono::milliseconds>(
+                      now - first_fire_time)
+                      .count();
+
+              if (fire_count == 0 || elapsed_since_first > CONFIRM_WINDOW_MS) {
+                // 重置计数器，从头开始
+                fire_count = 1;
+                first_fire_time = now;
+              } else {
+                fire_count++;
+              }
+
+              last_fire_time = now;
+
+              // 达到阈值 → 确认火警！
+              if (fire_count >= CONFIRM_COUNT) {
+                is_physical_alarm = true;
+                fire_count = 0; // 重置计数器，为下次做好准备
+                printf("🔥 [火警确认] 连续 %d 次信号确认，拉响警报！\n",
+                       CONFIRM_COUNT);
+                current_status = 1;
+              } else {
+                printf("🔸 [火警预警] 收到第 %d/%d 次信号，等待确认...\n", fire_count,
+                       CONFIRM_COUNT);
+                current_status = last_emitted_fire_status;
+              }
+            }
+          } else {
+            if (is_physical_alarm) {
+              current_status = 1;
+            } else {
+              current_status = 0;
+            }
           }
 
-          // --- 尚未报警：执行计数确认逻辑 ---
-          // 如果距离第一次计数已经超过确认窗口，重新开始计数
-          auto elapsed_since_first =
-              std::chrono::duration_cast<std::chrono::milliseconds>(
-                  now - first_fire_time)
-                  .count();
-
-          if (fire_count == 0 || elapsed_since_first > CONFIRM_WINDOW_MS) {
-            // 重置计数器，从头开始
-            fire_count = 1;
-            first_fire_time = now;
-          } else {
-            fire_count++;
-          }
-
-          last_fire_time = now;
-
-          // 达到阈值 → 确认火警！
-          if (fire_count >= CONFIRM_COUNT) {
-            is_physical_alarm = true;
-            fire_count = 0; // 重置计数器，为下次做好准备
-            printf("🔥 [火警确认] 连续 %d 次信号确认，拉响警报！\n",
-                   CONFIRM_COUNT);
-            emit SignalBridge::getInstance() -> sendPhysicalAlarmStatus(true);
-          } else {
-            printf("🔸 [火警预警] 收到第 %d/%d 次信号，等待确认...\n", fire_count,
-                   CONFIRM_COUNT);
+          if (current_status != last_emitted_fire_status && current_status != -1) {
+            last_emitted_fire_status = current_status;
+            emit SignalBridge::getInstance()->sendPhysicalAlarmStatus(current_status);
           }
         }
         else if (pkt.command == DEVICE_CORE_GAS_REPORT) {
-          printf("☁️ [RPMsg RX] 收到可燃气体上报: 状态值='%c' (0:清洁, 1:超标报警)\n", pkt.data[0]);
+          printf("☁️ [RPMsg RX] 收到可燃气体上报: 状态值='%c' (0:清洁, 1:超标报警, 2:断开)\n", pkt.data[0]);
           fflush(stdout);
-          bool gas_alarm_raw = (pkt.data[0] == '1');
-          auto now = std::chrono::steady_clock::now();
-          if (gas_alarm_raw) {
+          char val = pkt.data[0];
+          int current_status = 0;
+          if (val == '2') {
+            is_gas_alarm = false;
+            current_status = 2;
+          } else if (val == '1') {
+            auto now = std::chrono::steady_clock::now();
             if (is_gas_alarm) {
               last_gas_time = now;
+              current_status = 1;
             } else {
               auto elapsed_since_first =
                   std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -467,12 +494,24 @@ void RPMsgController::rx_task() {
                 gas_count = 0;
                 printf("☁️ [气体警报确认] 连续 %d 次信号确认，拉响警报！\n", GAS_CONFIRM_COUNT);
                 fflush(stdout);
-                emit SignalBridge::getInstance()->sendGasAlarmStatus(true);
+                current_status = 1;
               } else {
                 printf("☁️ [气体警报预警] 收到第 %d/%d 次信号，等待确认...\n", gas_count, GAS_CONFIRM_COUNT);
                 fflush(stdout);
+                current_status = last_emitted_gas_status;
               }
             }
+          } else {
+            if (is_gas_alarm) {
+              current_status = 1;
+            } else {
+              current_status = 0;
+            }
+          }
+
+          if (current_status != last_emitted_gas_status && current_status != -1) {
+            last_emitted_gas_status = current_status;
+            emit SignalBridge::getInstance()->sendGasAlarmStatus(current_status);
           }
         }
         else if (pkt.command == DEVICE_CORE_ENV_REPORT) {
@@ -494,6 +533,17 @@ void RPMsgController::rx_task() {
             }
           }
         }
+        else if (pkt.command == DEVICE_CORE_CHECK) {
+          if (pkt.length == sizeof(int64_t)) {
+            int64_t send_time_ns;
+            memcpy(&send_time_ns, pkt.data, sizeof(int64_t));
+            int64_t recv_time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                       std::chrono::steady_clock::now().time_since_epoch())
+                                       .count();
+            double rtt_ms = (recv_time_ns - send_time_ns) / 1000000.0;
+            emit SignalBridge::getInstance()->sendSlaveLatency(rtt_ms);
+          }
+        }
       }
 
     // --- 解除逻辑：必须沉默足够长时间才能解除 ---
@@ -506,7 +556,10 @@ void RPMsgController::rx_task() {
       if (silence_ms >= RELEASE_TIMEOUT_MS) {
         is_physical_alarm = false;
         printf("✅ [火警解除] 已沉默 %dms，恢复正常状态\n", RELEASE_TIMEOUT_MS);
-        emit SignalBridge::getInstance() -> sendPhysicalAlarmStatus(false);
+        if (last_emitted_fire_status != 0) {
+          last_emitted_fire_status = 0;
+          emit SignalBridge::getInstance() -> sendPhysicalAlarmStatus(0);
+        }
       }
     }
 
@@ -520,7 +573,10 @@ void RPMsgController::rx_task() {
         is_gas_alarm = false;
         printf("✅ [气体警报解除] 已沉默 %dms，恢复正常状态\n", GAS_RELEASE_TIMEOUT_MS);
         fflush(stdout);
-        emit SignalBridge::getInstance()->sendGasAlarmStatus(false);
+        if (last_emitted_gas_status != 0) {
+          last_emitted_gas_status = 0;
+          emit SignalBridge::getInstance()->sendGasAlarmStatus(0);
+        }
       }
     }
   }
@@ -530,7 +586,6 @@ void RPMsgController::heartbeat_task() {
   data_packet pkt;
   memset(&pkt, 0, sizeof(data_packet));
   pkt.command = DEVICE_CORE_CHECK;
-  pkt.length = 0;
 
   auto last_send_time = std::chrono::steady_clock::now();
 
@@ -550,8 +605,11 @@ void RPMsgController::heartbeat_task() {
 
     std::lock_guard<std::mutex> lock(mtx);
     if (is_connected && rpmsg_fd > 0) {
-      // 【Bug修复】必须发送完整 sizeof(data_packet) 字节，CRC 在结构体末尾
-      // 之前只发 7 字节，CRC 存在偏移 261 根本没发出去，导致从核 CRC 校验永远失败
+      int64_t send_time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+      memcpy(pkt.data, &send_time_ns, sizeof(int64_t));
+      pkt.length = sizeof(int64_t);
       pkt.crc8 = calculate_crc8((const uint8_t *)&pkt, sizeof(data_packet) - 1);
       int n = write(rpmsg_fd, &pkt, sizeof(data_packet));
       if (n < 0) {

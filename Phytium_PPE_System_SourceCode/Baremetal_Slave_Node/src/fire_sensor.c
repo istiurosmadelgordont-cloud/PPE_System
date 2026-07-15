@@ -15,9 +15,13 @@
 #include "fio_mux.h"
 #include "finterrupt.h"
 #include "fcpu_info.h"
+#include "fiopad_hw.h"
+#include "fiopad.h"
+#include "fsleep.h"
 #include <stdio.h>
 
 static FGpio fire_gpio;
+extern FIOPadCtrl iopad_ctrl;
 
 /* 外部引入全局仲裁器 */
 extern void Execute_Alarm_Arbitration(void);
@@ -65,4 +69,25 @@ void Fire_Sensor_Intr_Init(void) {
 
 int Fire_Sensor_Read_Level(void) {
     return FGpioGetInputValue(&fire_gpio);
+}
+
+int Fire_Sensor_Read_Level_With_Detect(int *disconnected)
+{
+    FIOPadSetPull(&iopad_ctrl, FIOPAD_A37_REG0_OFFSET, FIOPAD_PULL_DOWN);
+    fsleep_millisec(1);
+    int val_down = FGpioGetInputValue(&fire_gpio);
+
+    FIOPadSetPull(&iopad_ctrl, FIOPAD_A37_REG0_OFFSET, FIOPAD_PULL_UP);
+    fsleep_millisec(1);
+    int val_up = FGpioGetInputValue(&fire_gpio);
+
+    FIOPadSetPull(&iopad_ctrl, FIOPAD_A37_REG0_OFFSET, FIOPAD_PULL_NONE);
+
+    if (val_down != val_up) {
+        *disconnected = 1;
+        return 1; // 认为断开，正常状态火焰探头是1（高电平），所以返回1
+    } else {
+        *disconnected = 0;
+        return val_down;
+    }
 }
