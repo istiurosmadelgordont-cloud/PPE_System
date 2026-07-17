@@ -2,7 +2,7 @@
 
 > **通信框架**：OpenAMP (Open Asymmetric Multi-Processing)  
 > **传输层协议**：RPMsg (Remote Processor Messaging)  
-> **底层载体**：片上共享内存 (SRAM/DDR) + 软件生成中断 (SGI) Mailbox
+> **底层载体**：片上共享内存 (SRAM/DDR) + 跨核通知唤醒机制
 
 ---
 
@@ -27,12 +27,12 @@
                    │ - RPMsg 缓冲区池                 │
                    └─────────────────────────────────┘
                        ▲                         ▲
-                       │ Mailbox SGI 硬件中断     │
+                       │ 跨核通知唤醒机制           │
                        └─────────────────────────┘
 ```
 
 *   **Vring 机制**：利用物理共享内存划分为两个环形缓冲区（Vring 0 和 Vring 1），分别用于存放下行和上行的数据。
-*   **Mailbox 中断**：主核或从核向共享内存写入数据后，向对方核心发送一个软件生成中断（SGI），对方核心收到中断后在 ISR 中极速拉取数据，避免了传统的轮询开销。
+*   **跨核唤醒机制**：RPMsg 基于共享内存中的 vring 传递数据，并通过平台提供的跨核通知机制唤醒对端处理。
 
 ---
 
@@ -41,21 +41,15 @@
 为保证传输的高效与安全，本系统定义了统一的数据包传输控制格式。
 
 ### 2.1 协议帧布局
-```c
-#pragma pack(push, 1) // 强制 1 字节物理对齐，消除不同位宽系统下的内存空隙
-typedef struct {
-    uint32_t command;           // 4 字节：命令控制字 (如 0x0003U 代表心跳包)
-    uint16_t length;            // 2 字节：后续载荷实际字节大小
-    char     data[256];         // 256 字节：可变长度数据载荷 (Payload)
-    uint8_t  crc8;              // 1 字节：CRC-8/MAXIM 数据完整性校验码
-} data_packet;
-#pragma pack(pop)
+```text
+| command: 4B | length: 2B | payload: length B | CRC-8: 1B |
 ```
+协议采用变长帧结构：数据流按 `6 + length` 的大小打包，序列化后再将 1 字节的 CRC-8 校验码追加至帧尾，不作为固定结构体直接传输。
 
 ### 2.2 控制命令字编码 (Commands)
 *   `0x0001U` (DEVICE_CORE_START)：主核下发唤醒通知。
 *   `0x0002U` (DEVICE_CORE_SHUTDOWN)：主核下发安全关机通知（从核调用 PSCI 下线）。
-*   `0x0003U` (DEVICE_CORE_CHECK)：双向心跳包检测命令。
+*   `0x0003U` (DEVICE_CORE_CHECK)：用于周期性心跳与回包确认；同时，从核将任意 CRC 校验通过的主核报文视为主核存活信号，刷新通信失联计数与看门狗。
 *   `0x0004U` (DEVICE_CORE_LED_CTRL)：主核下发板载 LED 开关指令。
 *   `0x0005U` (DEVICE_CORE_BUZZER_CTRL)：主核下发声光报警阻断命令。
 *   `0x0006U` (DEVICE_CORE_FIRE_REPORT)：从核上报底层火焰中断状态。
@@ -68,36 +62,14 @@ typedef struct {
 
 为了规避共享内存在极端电磁干扰或 CPU 内存总线满载时的并发冲突（内存翻转、缓存污染），系统引入了 CRC-8/MAXIM 数据完整性检验。
 
-### 3.1 算法多项式
-*   **多项式**：\(x^8 + x^5 + x^4 + 1\)（数学表示为 `0x31`，即 `0b00110001`）。
-*   **初始值**：`0xFF`。
-*   **输入/输出反转**：高位优先模式（MSB First）。
-
-### 3.2 C++ / C 代码实现 (双侧算法完全对齐)
-```c
-uint8_t Calc_CRC8_Maxim(const uint8_t *data, size_t len) {
-    uint8_t crc = 0xFF; // 初始值为 0xFF
-    for (size_t i = 0; i < len; ++i) {
-        crc ^= data[i];
-        for (int j = 0; j < 8; ++j) {
-            if (crc & 0x80) {
-                crc = (crc << 1) ^ 0x31; // 异或多项式 0x31
-            } else {
-                crc <<= 1;
-            }
-        }
-    }
-    return crc;
-}
-```
-*   **校验范围**：计算范围覆盖结构体中的 `command` + `length` + `data[0..length-1]`，计算结果填入 `crc8`。
-*   **接收校验流程**：接收侧收到数据包后，剥离末尾的 `crc8`，对前段数据再次计算 CRC8 并比对。不匹配的数据包被立刻丢弃，终端打印校验失败，且 UI 的 CRC 错误计数器累加。
+### 3.1 算法与实现对齐
+系统采用 CRC-8/MAXIM 校验。实现使用初始值 `0x00`、LSB First 和反射多项式 `0x8C`；发送端对“命令字、长度、有效载荷”计算 CRC 并追加至帧尾，接收端校验失败后直接丢弃该帧。
 
 ---
 
 ## 4. 主从核心跳交互与超时监测时序
 
-主从核的健康运行基于“双向心跳自愈机制”进行互相监督。其运行时序图如下：
+从核每 500ms 检查一次主核通信状态；连续 10 次检查未恢复，即约 5 秒后进入 Fail-Safe。随后将看门狗超时设置为 1 秒、刷新一次配置，并停止继续喂狗，等待硬件冷复位。其运行时序图如下：
 
 ```mermaid
 sequenceDiagram
@@ -119,14 +91,12 @@ sequenceDiagram
     Note over Master: 主核进程暂停，心跳中断
 
     rect rgb(255, 230, 230)
-        Note over Slave: 从核 500ms 计数滴答触发
-        Note over Slave: g_heartbeat_miss_count = 1 (500ms)
-        Note over Slave: g_heartbeat_miss_count = 2 (1000ms)
-        Note over Slave: g_heartbeat_miss_count = 3 (1500ms)
-        Note over Slave: g_heartbeat_miss_count = 4 (2000ms)
-        Note over Slave: 判定失联：激活 Fail-Safe！
-        Slave->>Slave: 开启物理蜂鸣器长鸣报警
-        Slave->>Slave: 缩短 WDT 超时为 1秒，停止喂狗
+        Note over Slave: 主程序失联
+        Note over Slave: 从核连续10次未收到有效通信
+        Note over Slave: 进入Fail-Safe
+        Slave->>Slave: WDT超时调整为1秒
+        Slave->>Slave: 停止喂狗
+        Slave->>Slave: 硬件冷复位
     end
 
     Note over Slave: 3. 看门狗溢出冷重启
@@ -144,4 +114,6 @@ sequenceDiagram
     *   主核 AI 推理如果检测到工人脱下安全帽（违规），需要连续 3 帧（约 270ms）判定为违规，才通过 RPMsg 向从核发送开启报警指令。
     *   当工人重新戴上安全帽（合规）后，主核必须连续检测到 15 帧（约 1.3 秒）完全合规，才向从核发送解除报警指令。此举有效消除了临界点的高频开关噪音。
 *   **上行物理传感器报警防抖**：
-    *   从核在物理 EXTI 中断服务程序（ISR）中，在 50ms 时间窗口内进行多次采样判决，防止由于现场大功率电机的电磁辐射导致火焰传感器产生毛刺误报。
+    *   火焰传感器通过 EXTI 高优先级中断触发本地报警仲裁；对传感器断线状态进行识别，避免异常线路状态造成持续误报。
+
+**实测指标：** 从触发输入到从核 GPIO 蜂鸣器输出的端到端物理告警延迟为 **626μs（示波器实测）**。该指标描述完整物理报警路径，不等同于单独的 RPMsg 通信时延。
