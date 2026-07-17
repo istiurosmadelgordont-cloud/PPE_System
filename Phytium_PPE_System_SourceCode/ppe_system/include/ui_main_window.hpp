@@ -44,7 +44,7 @@ signals:
   void sendFrame(const cv::Mat &frame);
   void sendAlarmLog(QString type, QString time, QString imgPath);
   void sendPhysicalAlarmStatus(int status);
-  void sendAiMetrics(int latencyMs, int personCount);
+  void sendAiMetrics(int latencyMs, int violationCount);
   void sendGasAlarmStatus(int status);
   void sendEnvMetrics(double temp, double humid);
   void sendAiAlarmStatus(bool alarmed);
@@ -89,6 +89,9 @@ public:
   MainWindow(QWidget *parent = nullptr);
   ~MainWindow();
 
+protected:
+  void customEvent(QEvent *event) override;
+
 public slots:
   void updateFrame(const cv::Mat &frame);
   void addLogEntry(QString type, QString time, QString imgPath);
@@ -114,6 +117,8 @@ private:
   QWidget *createSensorItem(const QString &title, QLabel *&valueLabel,
                             const QString &color);
   QProgressBar *createCustomProgressBar(const QString &color);
+  void applyPhysicalAlarmStatus(int status);
+  void updateSafetyScore();
 
   // --- 顶部 Header ---
   QLabel *headerRpmsgLabel;
@@ -191,6 +196,8 @@ private:
   int m_cntGoggle = 0;
   int m_cntSmoke = 0;
   int m_cntGlove = 0;
+  // 今日评分记录当天出现过的最差状态，状态恢复时不回升。
+  int m_todayScore = 100;
 
   // 警报触发状态监控（防重复触发）
   bool m_fireAlerted = false;

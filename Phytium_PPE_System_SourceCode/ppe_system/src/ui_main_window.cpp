@@ -12,6 +12,7 @@
 #include "global_context.hpp"
 #include "rpmsg_node.hpp"
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDialog>
 #include <QFile>
@@ -27,6 +28,23 @@ Q_DECLARE_METATYPE(cv::Mat)
 
 #include <atomic>
 static std::atomic<int64_t> g_last_frame_time_ms(0);
+
+namespace {
+// 火焰告警必须抢在普通视频帧事件之前处理，避免 UI 队列积压造成红灯延迟。
+const QEvent::Type kPhysicalAlarmEventType =
+    static_cast<QEvent::Type>(QEvent::registerEventType());
+
+class PhysicalAlarmEvent final : public QEvent {
+public:
+  explicit PhysicalAlarmEvent(int status)
+      : QEvent(kPhysicalAlarmEventType), m_status(status) {}
+
+  int status() const { return m_status; }
+
+private:
+  int m_status;
+};
+} // namespace
 
 // ==========================================
 // CircularScoreWidget Implementation
@@ -489,7 +507,7 @@ MainWindow::MainWindow(QWidget *parent)
   sensorGas->setText("● 正常");
   sensorTemp->setText("28.5°C");
   sensorHumid->setText("65%");
-  sensorPerson->setText("3人");
+  sensorPerson->setText("0人");
   sensorNoise->setText("62dB");
 
   m_cntHelmet = 0;
@@ -533,68 +551,22 @@ MainWindow::MainWindow(QWidget *parent)
   connect(SignalBridge::getInstance(), &SignalBridge::sendSlaveLatency, this,
           &MainWindow::updateSlaveLatency, Qt::QueuedConnection);
   connect(SignalBridge::getInstance(), &SignalBridge::sendAiMetrics, this,
-          [this](int latencyMs, int personCount) {
+          [this](int latencyMs, int violationCount) {
             if (aiLatencyLabel) {
               aiLatencyLabel->setText(QString("%1ms").arg(latencyMs));
             }
             if (sensorPerson) {
-              sensorPerson->setText(QString("%1人").arg(personCount));
+              sensorPerson->setText(QString("%1人").arg(violationCount));
             }
           },
           Qt::QueuedConnection);
   connect(SignalBridge::getInstance(), &SignalBridge::sendPhysicalAlarmStatus,
           this, [this](int status) {
-            if (status == 1) {
-              m_fireAlerted = true;
-            } else {
-              m_fireAlerted = false;
-            }
-            if (sensorFlame) {
-              if (status == 1) {
-                headerRpmsgLabel->setText("● 物理探头预警中");
-                headerRpmsgLabel->setStyleSheet(
-                    "background-color: #fa520f; color: #1f1f1f; border: 1px solid "
-                    "#FCA5A5; border-radius: 14px; padding: 6px 14px; font-size: "
-                    "12px; font-weight: bold;");
-                videoLabel->setStyleSheet(
-                    "color: #1f1f1f; background-color: rgba(239, 68, 68, 0.15); "
-                    "border: 5px solid #fa520f; font-size: 16px;");
-                sensorFlame->setText("警报");
-                sensorFlame->setStyleSheet("color: #fa520f; font-weight: bold; "
-                                           "font-size: 18px; border: none;");
-                scoreWidget->setScore(45, "危险 - 立即排查");
-              } else if (status == 2) {
-                sensorFlame->setText("断开");
-                sensorFlame->setStyleSheet("color: #fa520f; font-weight: bold; "
-                                           "font-size: 18px; border: none;");
-              } else {
-                headerRpmsgLabel->setText("● RPMsg 正常");
-                headerRpmsgLabel->setStyleSheet(
-                    "background-color: #f0e6d2; color: #1f1f1f; border: 1px solid "
-                    "#4A3825; border-radius: 14px; padding: 6px 14px; font-size: "
-                    "12px; font-weight: bold;");
-                videoLabel->setStyleSheet(
-                    "color: #666; background-color: transparent; border: none; "
-                    "font-size: 16px;");
-                sensorFlame->setText("● 安全");
-                sensorFlame->setStyleSheet("color: #10B981; font-weight: bold; "
-                                           "font-size: 18px; border: none;");
-                
-                // 恢复正常时，动态计算基于 AI 违规的实时得分，而不是粗暴地写死为 84 分
-                int total_violations = m_cntHelmet + m_cntVest + m_cntGoggle + m_cntSmoke + m_cntGlove;
-                int new_score = 100 - (total_violations * 5);
-                if (new_score < 0) new_score = 0;
-                QString statusText = "优秀";
-                if (new_score >= 90) statusText = "优秀";
-                else if (new_score >= 80) statusText = "良好";
-                else if (new_score >= 60) statusText = "一般";
-                else statusText = "差";
-                scoreWidget->setScore(new_score, statusText);
-              }
-            }
-            updateThreeColorLights();
+            // RPMsg 接收线程只负责投递高优先级事件，所有控件仍由 UI 线程更新。
+            QCoreApplication::postEvent(
+                this, new PhysicalAlarmEvent(status), Qt::HighEventPriority);
           },
-          Qt::QueuedConnection);
+          Qt::DirectConnection);
 
   connect(SignalBridge::getInstance(), &SignalBridge::sendGasAlarmStatus, this,
           [this](int status) {
@@ -616,6 +588,7 @@ MainWindow::MainWindow(QWidget *parent)
                 m_gasAlerted = false;
               }
             }
+            updateSafetyScore();
             updateThreeColorLights();
           },
           Qt::QueuedConnection);
@@ -849,19 +822,7 @@ void MainWindow::addLogEntry(QString type, QString time, QString imgPath) {
     if (barGlove) barGlove->setValue(std::min(m_cntGlove * 5, 100));
   }
 
-  int total_violations = m_cntHelmet + m_cntVest + m_cntGoggle + m_cntSmoke + m_cntGlove;
-  int new_score = 100 - (total_violations * 5);
-  if (new_score < 0) new_score = 0;
-
-  QString statusText = "优秀";
-  if (new_score >= 90) statusText = "优秀";
-  else if (new_score >= 80) statusText = "良好";
-  else if (new_score >= 60) statusText = "一般";
-  else statusText = "危险 - 立即排查";
-
-  if (scoreWidget) {
-    scoreWidget->setScore(new_score, statusText);
-  }
+  updateSafetyScore();
 
   updateThreeColorLights();
 
@@ -1206,6 +1167,87 @@ void MainWindow::updateThreeColorLights() {
       lightStatus->setText("当前状态：● 安全");
       lightStatus->setStyleSheet("color: #1f1f1f; font-size: 14px; font-weight: bold; border: none; margin-top: 5px;");
     }
+  }
+}
+
+void MainWindow::customEvent(QEvent *event) {
+  if (event->type() == kPhysicalAlarmEventType) {
+    applyPhysicalAlarmStatus(
+        static_cast<PhysicalAlarmEvent *>(event)->status());
+    return;
+  }
+  QMainWindow::customEvent(event);
+}
+
+void MainWindow::applyPhysicalAlarmStatus(int status) {
+  m_fireAlerted = (status == 1);
+
+  if (status == 1) {
+    headerRpmsgLabel->setText("● 物理探头预警中");
+    headerRpmsgLabel->setStyleSheet(
+        "background-color: #fa520f; color: #1f1f1f; border: 1px solid "
+        "#FCA5A5; border-radius: 14px; padding: 6px 14px; font-size: "
+        "12px; font-weight: bold;");
+    videoLabel->setStyleSheet(
+        "color: #1f1f1f; background-color: rgba(239, 68, 68, 0.15); "
+        "border: 5px solid #fa520f; font-size: 16px;");
+    sensorFlame->setText("警报");
+    sensorFlame->setStyleSheet("color: #fa520f; font-weight: bold; "
+                               "font-size: 18px; border: none;");
+  } else if (status == 2) {
+    headerRpmsgLabel->setText("● 火焰探头断开");
+    headerRpmsgLabel->setStyleSheet(
+        "background-color: #fa520f; color: #1f1f1f; border: 1px solid "
+        "#FCA5A5; border-radius: 14px; padding: 6px 14px; font-size: "
+        "12px; font-weight: bold;");
+    videoLabel->setStyleSheet(
+        "color: #666; background-color: transparent; border: none; "
+        "font-size: 16px;");
+    sensorFlame->setText("断开");
+    sensorFlame->setStyleSheet("color: #fa520f; font-weight: bold; "
+                               "font-size: 18px; border: none;");
+  } else {
+    headerRpmsgLabel->setText("● RPMsg 正常");
+    headerRpmsgLabel->setStyleSheet(
+        "background-color: #f0e6d2; color: #1f1f1f; border: 1px solid "
+        "#4A3825; border-radius: 14px; padding: 6px 14px; font-size: "
+        "12px; font-weight: bold;");
+    videoLabel->setStyleSheet(
+        "color: #666; background-color: transparent; border: none; "
+        "font-size: 16px;");
+    sensorFlame->setText("● 安全");
+    sensorFlame->setStyleSheet("color: #10B981; font-weight: bold; "
+                               "font-size: 18px; border: none;");
+  }
+
+  updateSafetyScore();
+  updateThreeColorLights();
+}
+
+void MainWindow::updateSafetyScore() {
+  const int totalViolations =
+      m_cntHelmet + m_cntVest + m_cntGoggle + m_cntSmoke + m_cntGlove;
+  int candidateScore = std::max(0, 100 - totalViolations * 5);
+
+  if (m_fireAlerted || m_gasAlerted) {
+    candidateScore = std::min(candidateScore, 45);
+  }
+
+  // “今日评分”记录当天最差状态，恢复信号不能把历史扣分抬回去。
+  m_todayScore = std::min(m_todayScore, candidateScore);
+
+  QString statusText;
+  if (m_todayScore >= 90)
+    statusText = "优秀";
+  else if (m_todayScore >= 80)
+    statusText = "良好";
+  else if (m_todayScore >= 60)
+    statusText = "一般";
+  else
+    statusText = "危险 - 立即排查";
+
+  if (scoreWidget) {
+    scoreWidget->setScore(m_todayScore, statusText);
   }
 }
 
